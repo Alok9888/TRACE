@@ -9,11 +9,13 @@ import org.springframework.ai.document.Document;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -21,6 +23,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
+import java.util.zip.GZIPInputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HexFormat;
@@ -53,6 +56,8 @@ public class CloudflareEmbeddingService implements EmbeddingModel {
     private static final String CLOUDFLARE_ACCOUNT_ID = "cdf43a252db0973fb702921884aec43b";
     private static final String MODEL_NAME = "@cf/baai/bge-small-en-v1.5";
     private static final String EMBEDDING_ENDPOINT = "/ai/run/" + MODEL_NAME;
+    private static final URI EMBEDDING_URI = URI.create(
+            "https://api.cloudflare.com/client/v4/accounts/" + CLOUDFLARE_ACCOUNT_ID + EMBEDDING_ENDPOINT);
     private static final int MODEL_DIMENSIONS = 384;
     private static final int EMBEDDING_BATCH_SIZE = 64;
     private static final int MAX_CONCURRENT_BATCH_CALLS = 3;
@@ -74,7 +79,7 @@ public class CloudflareEmbeddingService implements EmbeddingModel {
 
     private static final ExecutorService BATCH_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
 
-    private final String apiToken;
+    private final String authHeader;
     @SuppressWarnings("unused")
     private final JdbcTemplate jdbcTemplate;
 
@@ -98,7 +103,8 @@ public class CloudflareEmbeddingService implements EmbeddingModel {
     }
 
     public CloudflareEmbeddingService(JdbcTemplate jdbcTemplate) {
-        this.apiToken = System.getenv("CLOUDFLARE_API_TOKEN");
+        String token = System.getenv("CLOUDFLARE_API_TOKEN");
+        this.authHeader = "Bearer " + token;
         this.jdbcTemplate = jdbcTemplate;
         log.info("CloudflareEmbeddingService initialized: model={} dims={} batchSize={} accountIdLen={}",
                 MODEL_NAME, MODEL_DIMENSIONS, EMBEDDING_BATCH_SIZE, CLOUDFLARE_ACCOUNT_ID.length());
@@ -275,7 +281,6 @@ public class CloudflareEmbeddingService implements EmbeddingModel {
     private List<float[]> callCloudflareAPI(List<String> texts, Duration timeout) {
         try {
             apiCallCount.incrementAndGet();
-            String url = "https://api.cloudflare.com/client/v4/accounts/" + CLOUDFLARE_ACCOUNT_ID + EMBEDDING_ENDPOINT;
 
             ObjectNode requestBody = OBJECT_MAPPER.createObjectNode();
             ArrayNode textArray = requestBody.putArray("text");
@@ -284,51 +289,87 @@ public class CloudflareEmbeddingService implements EmbeddingModel {
             }
 
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .header("Authorization", "Bearer " + apiToken)
+                    .uri(EMBEDDING_URI)
+                    .header("Authorization", authHeader)
                     .header("Content-Type", "application/json")
+                    .header("Accept-Encoding", "gzip")
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody.toString()))
                     .timeout(timeout)
                     .build();
 
-            HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<InputStream> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            boolean isGzip = "gzip".equalsIgnoreCase(response.headers().firstValue("Content-Encoding").orElse(""));
 
-            if (response.statusCode() != 200) {
-                throw new CloudflareApiException(response.statusCode(),
-                        "HTTP " + response.statusCode() + ": " + response.body());
-            }
-
-            JsonNode root = OBJECT_MAPPER.readTree(response.body());
-            JsonNode result = root.get("result");
-            if (result == null) {
-                throw new RuntimeException("Cloudflare embedding API error - no result: "
-                        + response.body().substring(0, Math.min(1000, response.body().length())));
-            }
-            JsonNode data = result.get("data");
-            if (data == null || !data.isArray()) {
-                throw new RuntimeException("Cloudflare embedding API error - no data: "
-                        + response.body().substring(0, Math.min(1000, response.body().length())));
-            }
-
-            List<float[]> embeddings = new ArrayList<>(data.size());
-            for (int i = 0; i < data.size(); i++) {
-                JsonNode vectorArray = data.get(i);
-                if (vectorArray == null || vectorArray.size() != MODEL_DIMENSIONS) {
-                    throw new RuntimeException("Unexpected embedding vector dimension at index " + i
-                            + ": " + (vectorArray == null ? "null" : vectorArray.size()));
+            try (InputStream rawStream = response.body();
+                 InputStream bodyStream = isGzip ? new GZIPInputStream(rawStream) : rawStream) {
+                if (response.statusCode() != 200) {
+                    byte[] errBytes = bodyStream.readNBytes(2048);
+                    throw new CloudflareApiException(response.statusCode(),
+                            "HTTP " + response.statusCode() + ": " + new String(errBytes, StandardCharsets.UTF_8));
                 }
-                float[] vector = new float[MODEL_DIMENSIONS];
-                for (int j = 0; j < MODEL_DIMENSIONS; j++) {
-                    vector[j] = (float) vectorArray.get(j).asDouble();
-                }
-                embeddings.add(vector);
-            }
 
-            return embeddings;
+                // Stream-parse JSON directly into float[384] arrays (zero DOM DoubleNode/ArrayNode heap churn)
+                return parseEmbeddingsStreaming(bodyStream, texts.size());
+            }
         } catch (CloudflareApiException e) {
             throw e;
         } catch (Exception e) {
             throw new RuntimeException("Cloudflare embedding API call failed: " + e.getMessage(), e);
+        }
+    }
+
+    private static List<float[]> parseEmbeddingsStreaming(InputStream bodyStream, int expectedCount) throws Exception {
+        try (JsonParser parser = OBJECT_MAPPER.getFactory().createParser(bodyStream)) {
+            if (parser.nextToken() != JsonToken.START_OBJECT) {
+                throw new RuntimeException("Cloudflare embedding API error - invalid JSON root");
+            }
+            List<float[]> embeddings = null;
+            boolean sawResult = false;
+            while (parser.nextToken() != JsonToken.END_OBJECT) {
+                String fieldName = parser.currentName();
+                JsonToken valueToken = parser.nextToken();
+                if ("result".equals(fieldName) && valueToken == JsonToken.START_OBJECT) {
+                    sawResult = true;
+                    while (parser.nextToken() != JsonToken.END_OBJECT) {
+                        String resultField = parser.currentName();
+                        JsonToken resultVal = parser.nextToken();
+                        if ("data".equals(resultField) && resultVal == JsonToken.START_ARRAY) {
+                            embeddings = new ArrayList<>(expectedCount);
+                            int vecIdx = 0;
+                            while (parser.nextToken() != JsonToken.END_ARRAY) {
+                                if (parser.currentToken() != JsonToken.START_ARRAY) {
+                                    throw new RuntimeException("Unexpected embedding vector token at index " + vecIdx);
+                                }
+                                float[] vector = new float[MODEL_DIMENSIONS];
+                                int dim = 0;
+                                while (parser.nextToken() != JsonToken.END_ARRAY) {
+                                    if (dim < MODEL_DIMENSIONS) {
+                                        vector[dim] = parser.getFloatValue();
+                                    }
+                                    dim++;
+                                }
+                                if (dim != MODEL_DIMENSIONS) {
+                                    throw new RuntimeException("Unexpected embedding vector dimension at index "
+                                            + vecIdx + ": " + dim);
+                                }
+                                embeddings.add(vector);
+                                vecIdx++;
+                            }
+                        } else {
+                            parser.skipChildren();
+                        }
+                    }
+                } else {
+                    parser.skipChildren();
+                }
+            }
+            if (!sawResult) {
+                throw new RuntimeException("Cloudflare embedding API error - no result");
+            }
+            if (embeddings == null) {
+                throw new RuntimeException("Cloudflare embedding API error - no data");
+            }
+            return embeddings;
         }
     }
 

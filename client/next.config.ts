@@ -5,6 +5,9 @@ const backendOrigin = (
 ).replace(/\/$/, "");
 
 const nextConfig: NextConfig = {
+  experimental: {
+    optimizePackageImports: ["lucide-react", "react-icons", "date-fns", "recharts"],
+  },
   async rewrites() {
     return [
       {

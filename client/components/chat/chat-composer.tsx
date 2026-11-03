@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import { SendHorizontal, Square } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Kbd } from "@/components/ui/kbd";
 import { Spinner } from "@/components/ui/spinner";
 
-export function ChatComposer({
+export const ChatComposer = memo(function ChatComposer({
   disabled,
   streaming,
   onSend,
@@ -72,4 +72,4 @@ export function ChatComposer({
       </div>
     </div>
   );
-}
+});

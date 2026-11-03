@@ -155,7 +155,9 @@ export function AppShell({
         )}
         <div className="flex flex-1 flex-col">{children}</div>
       </SidebarInset>
-      <AddRepoDialog open={addRepoDialogOpen} onOpenChange={setAddRepoDialogOpen} />
+      {addRepoDialogOpen && (
+        <AddRepoDialog open={addRepoDialogOpen} onOpenChange={setAddRepoDialogOpen} />
+      )}
     </SidebarProvider>
   );
 }

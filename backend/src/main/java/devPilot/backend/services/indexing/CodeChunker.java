@@ -7,28 +7,27 @@ import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.ai.document.Document;
-import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import devPilot.backend.services.ai.RagSettings;
 
+/**
+ * Fast, single-pass, line-boundary-aware code chunker.
+ * Avoids heavy BPE tokenization overhead while tracking exact 1-based line spans
+ * and keeping every chunk safely within bge-small-en-v1.5's 512-token window.
+ */
 @Component
 public class CodeChunker {
-    private final TokenTextSplitter splitter;
+    private final int maxChunkChars;
+    private final int overlapChars;
     private final CodeFileFilter fileFilter;
-    private final int overlapTokens;
 
     public CodeChunker(
             @Value("${app.indexing.chunk-size:1600}") int chunkSize,
             CodeFileFilter fileFilter) {
-        // Spring AI splits by tokens; ~4 characters per token -> 1600 chars ~= 400 tokens (fits 512-token model window).
-        int chunkTokens = Math.max(50, chunkSize / 4);
-        this.overlapTokens = chunkTokens / 10; // 10% overlap
-
-        this.splitter = TokenTextSplitter.builder()
-                .withChunkSize(chunkTokens)
-                .build();
+        this.maxChunkChars = Math.max(200, chunkSize);
+        this.overlapChars = Math.max(0, this.maxChunkChars / 10); // 10% overlap
         this.fileFilter = fileFilter;
     }
 
@@ -37,38 +36,41 @@ public class CodeChunker {
             return List.of();
         }
 
-        // Sanitize input: remove null bytes that cause UTF8 encoding errors in Postgres
         String sanitizedContent = sanitize(content);
         String sanitizedFilePath = sanitize(filePath);
         String sanitizedRepoId = sanitize(repoId);
+        String userIdStr = userId.toString();
 
         String language = sanitize(fileFilter.detectLanguage(sanitizedFilePath));
         String header = "// File: " + sanitizedFilePath + "\n";
 
-        Document source = new Document(sanitizedContent, baseMetadata(userId, sanitizedRepoId, sanitizedFilePath, language));
-        List<Document> split = splitter.apply(List.of(source));
-        if (split.isEmpty()) {
+        List<LineSlice> lines = splitLines(sanitizedContent);
+        if (lines.isEmpty()) {
             return List.of();
         }
 
-        // Compute 1-based startLine/endLine for each raw split chunk before adding overlap/header
-        List<ChunkSpan> spans = computeLineSpans(sanitizedContent, split);
+        List<RawChunk> rawChunks = buildLineAwareChunks(sanitizedContent, lines);
+        if (rawChunks.isEmpty()) {
+            return List.of();
+        }
 
-        // Apply 10% overlap and prepend "// File: <path>\n" header to EVERY chunk
-        int overlapChars = overlapTokens * 4;
-        List<Document> result = new ArrayList<>(spans.size());
-
-        for (int i = 0; i < spans.size(); i++) {
-            ChunkSpan current = spans.get(i);
+        List<Document> result = new ArrayList<>(rawChunks.size());
+        for (int i = 0; i < rawChunks.size(); i++) {
+            RawChunk current = rawChunks.get(i);
             String body = current.text;
             int startLine = current.startLine;
             int endLine = current.endLine;
 
             if (i > 0 && overlapChars > 0) {
-                ChunkSpan prev = spans.get(i - 1);
+                RawChunk prev = rawChunks.get(i - 1);
                 String prevText = prev.text;
                 if (prevText != null && !prevText.isEmpty()) {
                     int overlapStart = Math.max(0, prevText.length() - overlapChars);
+                    // Snap overlap start forward to the next line boundary when possible for cleaner code context
+                    int nl = prevText.indexOf('\n', overlapStart);
+                    if (nl >= 0 && nl + 1 < prevText.length()) {
+                        overlapStart = nl + 1;
+                    }
                     String overlap = prevText.substring(overlapStart);
                     int overlapLines = countNewlines(overlap);
                     startLine = Math.max(1, prev.endLine - overlapLines);
@@ -76,95 +78,102 @@ public class CodeChunker {
                 }
             }
 
-            Map<String, Object> metadata = new HashMap<>(current.metadata);
+            Map<String, Object> metadata = new HashMap<>(8);
             metadata.put(RagSettings.METADATA_REPO_ID, sanitizedRepoId);
-            metadata.put(RagSettings.METADATA_USER_ID, userId.toString());
+            metadata.put(RagSettings.METADATA_USER_ID, userIdStr);
             metadata.put("filePath", sanitizedFilePath);
             metadata.put("language", language);
             metadata.put("chunkIndex", i);
             metadata.put("startLine", startLine);
             metadata.put("endLine", endLine);
 
-            result.add(new Document(sanitize(header + body), metadata));
+            result.add(new Document(header + body, metadata));
         }
 
         return result;
     }
 
-    private List<ChunkSpan> computeLineSpans(String fullContent, List<Document> chunks) {
-        List<ChunkSpan> spans = new ArrayList<>(chunks.size());
-        int totalLines = countNewlines(fullContent) + 1;
-        int cursor = 0;
-        int cursorLine = 1;
+    private List<RawChunk> buildLineAwareChunks(String content, List<LineSlice> lines) {
+        List<RawChunk> chunks = new ArrayList<>();
+        StringBuilder buf = new StringBuilder(Math.min(content.length(), maxChunkChars + 64));
+        int chunkStartLine = -1;
+        int chunkEndLine = -1;
 
-        for (Document chunk : chunks) {
-            String rawText = chunk.getText() == null ? "" : chunk.getText();
-            int matchPos = findChunkOffset(fullContent, rawText, cursor);
-            int startLine;
-            int endLine;
-
-            if (matchPos >= 0) {
-                cursorLine += countNewlines(fullContent, cursor, matchPos);
-                startLine = cursorLine;
-                int chunkLines = countNewlines(rawText);
-                endLine = Math.min(totalLines, startLine + chunkLines);
-                int nextCursor = Math.min(fullContent.length(), matchPos + rawText.length());
-                cursorLine += countNewlines(fullContent, matchPos, nextCursor);
-                cursor = nextCursor;
-            } else {
-                startLine = cursorLine;
-                int chunkLines = countNewlines(rawText);
-                endLine = Math.min(totalLines, startLine + chunkLines);
+        for (LineSlice line : lines) {
+            int lineLen = line.end - line.start;
+            // Hard-slice abnormally long single lines (e.g. minified bundles/JSON) so we never overflow token windows
+            if (lineLen > maxChunkChars) {
+                if (!buf.isEmpty()) {
+                    flushChunk(chunks, buf, chunkStartLine, chunkEndLine);
+                    chunkStartLine = -1;
+                }
+                for (int offset = line.start; offset < line.end; offset += maxChunkChars) {
+                    int sliceEnd = Math.min(offset + maxChunkChars, line.end);
+                    String piece = content.substring(offset, sliceEnd);
+                    if (!piece.isBlank()) {
+                        chunks.add(new RawChunk(piece, line.lineNumber, line.lineNumber));
+                    }
+                }
+                continue;
             }
 
-            spans.add(new ChunkSpan(rawText, startLine, Math.max(startLine, endLine), chunk.getMetadata()));
+            int projected = buf.length() + (buf.isEmpty() ? 0 : 1) + lineLen;
+            if (!buf.isEmpty() && projected > maxChunkChars) {
+                flushChunk(chunks, buf, chunkStartLine, chunkEndLine);
+                chunkStartLine = -1;
+            }
+
+            if (chunkStartLine < 0) {
+                chunkStartLine = line.lineNumber;
+            } else {
+                buf.append('\n');
+            }
+            buf.append(content, line.start, line.end);
+            chunkEndLine = line.lineNumber;
         }
 
-        return spans;
+        if (!buf.isEmpty()) {
+            flushChunk(chunks, buf, chunkStartLine, chunkEndLine);
+        }
+        return chunks;
     }
 
-    private static int findChunkOffset(String fullContent, String chunkText, int fromIndex) {
-        if (chunkText.isEmpty()) {
-            return fromIndex;
+    private static void flushChunk(List<RawChunk> chunks, StringBuilder buf, int startLine, int endLine) {
+        String text = buf.toString();
+        buf.setLength(0);
+        if (!text.isBlank()) {
+            chunks.add(new RawChunk(text, Math.max(1, startLine), Math.max(Math.max(1, startLine), endLine)));
         }
-        int exact = fullContent.indexOf(chunkText, fromIndex);
-        if (exact >= 0) {
-            return exact;
+    }
+
+    private static List<LineSlice> splitLines(String content) {
+        List<LineSlice> lines = new ArrayList<>(Math.max(16, content.length() / 48));
+        int len = content.length();
+        int lineStart = 0;
+        int lineNum = 1;
+        for (int i = 0; i < len; i++) {
+            if (content.charAt(i) == '\n') {
+                int lineEnd = (i > lineStart && content.charAt(i - 1) == '\r') ? i - 1 : i;
+                lines.add(new LineSlice(lineStart, lineEnd, lineNum));
+                lineNum++;
+                lineStart = i + 1;
+            }
         }
-        String trimmed = chunkText.stripLeading();
-        if (trimmed.isEmpty()) {
-            return fromIndex;
+        if (lineStart < len) {
+            int lineEnd = (len > lineStart && content.charAt(len - 1) == '\r') ? len - 1 : len;
+            lines.add(new LineSlice(lineStart, lineEnd, lineNum));
         }
-        int probeLen = Math.min(48, trimmed.length());
-        int probe = fullContent.indexOf(trimmed.substring(0, probeLen), fromIndex);
-        if (probe >= 0) {
-            return probe;
-        }
-        return -1;
+        return lines;
     }
 
     private static int countNewlines(String text) {
-        return countNewlines(text, 0, text.length());
-    }
-
-    private static int countNewlines(String text, int start, int end) {
         int count = 0;
-        int limit = Math.min(end, text.length());
-        for (int i = Math.max(0, start); i < limit; i++) {
+        for (int i = 0; i < text.length(); i++) {
             if (text.charAt(i) == '\n') {
                 count++;
             }
         }
         return count;
-    }
-
-    private static Map<String, Object> baseMetadata(UUID userId, String repoId, String filePath, String language) {
-        Map<String, Object> metadata = new HashMap<>();
-        metadata.put(RagSettings.METADATA_REPO_ID, repoId);
-        metadata.put(RagSettings.METADATA_USER_ID, userId.toString());
-        metadata.put("filePath", filePath);
-        metadata.put("language", language);
-        return metadata;
     }
 
     /** Remove null bytes that cause UTF8 encoding errors in Postgres TEXT/jsonb columns (zero-alloc fast path). */
@@ -175,5 +184,7 @@ public class CodeChunker {
         return input.replace("\0", "");
     }
 
-    private record ChunkSpan(String text, int startLine, int endLine, Map<String, Object> metadata) {}
+    private record LineSlice(int start, int end, int lineNumber) {}
+
+    private record RawChunk(String text, int startLine, int endLine) {}
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useMemo } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -58,19 +59,36 @@ export function OverviewDashboard() {
   const reposQuery = useRepos();
   const repos = reposQuery.data ?? [];
 
-  const readyCount = repos.filter((repo) => repo.indexStatus === "READY").length;
-  const indexingCount = repos.filter(
-    (repo) => repo.indexStatus === "INDEXING"
-  ).length;
-  const failedCount = repos.filter((repo) => repo.indexStatus === "FAILED").length;
-  const totalChunks = repos.reduce((sum, repo) => sum + repo.chunkCount, 0);
-  const recentRepos = [...repos]
-    .sort((a, b) => {
-      const aTime = a.indexedAt ? new Date(a.indexedAt).getTime() : 0;
-      const bTime = b.indexedAt ? new Date(b.indexedAt).getTime() : 0;
-      return bTime - aTime;
-    })
-    .slice(0, 3);
+  const { readyCount, indexingCount, failedCount, pendingCount, totalChunks, recentRepos } =
+    useMemo(() => {
+      let ready = 0;
+      let indexing = 0;
+      let failed = 0;
+      let pending = 0;
+      let chunks = 0;
+      for (const repo of repos) {
+        chunks += repo.chunkCount;
+        if (repo.indexStatus === "READY") ready++;
+        else if (repo.indexStatus === "INDEXING") indexing++;
+        else if (repo.indexStatus === "FAILED") failed++;
+        else if (repo.indexStatus === "PENDING") pending++;
+      }
+      const recent = [...repos]
+        .sort((a, b) => {
+          const aTime = a.indexedAt ? Date.parse(a.indexedAt) : 0;
+          const bTime = b.indexedAt ? Date.parse(b.indexedAt) : 0;
+          return bTime - aTime;
+        })
+        .slice(0, 3);
+      return {
+        readyCount: ready,
+        indexingCount: indexing,
+        failedCount: failed,
+        pendingCount: pending,
+        totalChunks: chunks,
+        recentRepos: recent,
+      };
+    }, [repos]);
 
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
@@ -185,9 +203,7 @@ export function OverviewDashboard() {
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-sm text-muted-foreground">Pending</span>
-                    <Badge variant="secondary">
-                      {repos.filter((repo) => repo.indexStatus === "PENDING").length}
-                    </Badge>
+                    <Badge variant="secondary">{pendingCount}</Badge>
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-sm text-muted-foreground">Failed</span>

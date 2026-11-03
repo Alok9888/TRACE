@@ -1,5 +1,10 @@
 package devPilot.backend.config;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.concurrent.Executor;
 
 import org.slf4j.Logger;
@@ -46,7 +51,10 @@ public class EmbeddingConfig {
     ApplicationRunner vectorIndexInitializer(
             JdbcTemplate jdbcTemplate,
             @Qualifier("ioExecutor") Executor ioExecutor) {
-        return args -> ioExecutor.execute(() -> ensureVectorIndexes(jdbcTemplate));
+        return args -> {
+            ioExecutor.execute(() -> ensureVectorIndexes(jdbcTemplate));
+            ioExecutor.execute(() -> warmUpExternalConnections(jdbcTemplate));
+        };
     }
 
     private void ensureVectorIndexes(JdbcTemplate jdbcTemplate) {
@@ -58,7 +66,8 @@ public class EmbeddingConfig {
             "CREATE INDEX IF NOT EXISTS idx_vectors_cf384_repo_user ON " + VECTOR_TABLE
                 + " ((metadata->>'repoId'), (metadata->>'userId'))",
             "CREATE INDEX IF NOT EXISTS idx_vectors_cf384_repo_filepath ON " + VECTOR_TABLE
-                + " ((metadata->>'repoId'), (metadata->>'filePath'))"
+                + " ((metadata->>'repoId'), (metadata->>'filePath'))",
+            "ANALYZE " + VECTOR_TABLE
         };
         for (String sql : statements) {
             try {
@@ -68,5 +77,32 @@ public class EmbeddingConfig {
             }
         }
         log.info("Verified PgVector HNSW and metadata indexes on {}", VECTOR_TABLE);
+    }
+
+    /**
+     * Warms up HikariCP Neon connections and DNS/TLS 1.3 pools for Cloudflare & Groq at startup
+     * so the very first user chat message avoids cold-connection handshake penalties.
+     */
+    private void warmUpExternalConnections(JdbcTemplate jdbcTemplate) {
+        try {
+            jdbcTemplate.queryForObject("SELECT 1", Integer.class);
+        } catch (Exception ignored) {
+        }
+        HttpClient client = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_2)
+                .connectTimeout(Duration.ofSeconds(3))
+                .build();
+        for (String url : new String[]{"https://api.cloudflare.com", "https://api.groq.com"}) {
+            try {
+                HttpRequest req = HttpRequest.newBuilder()
+                        .uri(URI.create(url))
+                        .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                        .timeout(Duration.ofSeconds(3))
+                        .build();
+                client.send(req, HttpResponse.BodyHandlers.discarding());
+            } catch (Exception ignored) {
+            }
+        }
+        log.debug("Completed startup connection warmup for Neon, Cloudflare, and Groq");
     }
 }

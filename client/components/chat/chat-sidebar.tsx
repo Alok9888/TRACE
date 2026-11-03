@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { Plus, RotateCcw } from "lucide-react";
 
@@ -16,7 +17,7 @@ import { useStartIndexing } from "@/hooks/use-repos";
 import type { Repository } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-export function ChatSidebar({
+export const ChatSidebar = memo(function ChatSidebar({
   repo,
   sessionId,
   onSelectSession,
@@ -116,4 +117,4 @@ export function ChatSidebar({
       </ScrollArea>
     </aside>
   );
-}
+});

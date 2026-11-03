@@ -42,6 +42,7 @@ import devPilot.backend.entity.IndexStatus;
 import devPilot.backend.entity.Repository;
 import devPilot.backend.exceptions.NotFoundException;
 import devPilot.backend.repository.RepositoryRepository;
+import devPilot.backend.services.ai.ChatContextCache;
 import devPilot.backend.services.ai.RagSettings;
 import devPilot.backend.services.embedding.CloudflareEmbeddingService;
 import devPilot.backend.services.github.GitHubRateLimiter;
@@ -82,6 +83,9 @@ public class IndexingService {
     @Autowired(required = false)
     @Qualifier("ioExecutor")
     private Executor ioExecutor;
+
+    @Autowired(required = false)
+    private ChatContextCache chatContextCache;
 
     @Value("${app.indexing.max-file-bytes:102400}")
     private long maxFileBytes;
@@ -279,11 +283,12 @@ public class IndexingService {
         pathsToDelete.addAll(result.changedFiles);
         deleteVectorsForRemovedFiles(userId, repoId.toString(), pathsToDelete);
 
-        // Stream-fetch, chunk, and flush 64-chunk batches with bounded parallelism (2 workers)
+        // Stream-fetch, chunk, and flush 64-chunk batches with bounded parallelism
         // Never holds whole-repo chunks in heap (safe for -Xmx160m)
         long pipelineStart = System.currentTimeMillis();
         StreamingStats stats = streamIndexFiles(
-                repo, userId, repoId, result.newFiles, result.changedFiles, result.allFiles.size(), embeddingFailed);
+                repo, userId, repoId, result.newFiles, result.changedFiles, result.allFiles.size(),
+                filteredTree.eligibleBytes, filteredTree.skippedBytes, embeddingFailed);
         long pipelineDuration = System.currentTimeMillis() - pipelineStart;
 
         if (embeddingFailed.get()) {
@@ -314,6 +319,9 @@ public class IndexingService {
 
         try {
             repositoryRepository.save(repo);
+            if (chatContextCache != null) {
+                chatContextCache.invalidateRepository(repoId);
+            }
             log.info("{} [INDEX] marked READY repoId={}", Instant.now(), repoId);
         } catch (Exception e) {
             log.error("{} [INDEX] FAILED to persist READY status repoId={}: {}", Instant.now(), repoId, e.getMessage(), e);
@@ -338,8 +346,8 @@ public class IndexingService {
     }
 
     /**
-     * Streams files (via single-request zipball for bulk indexing or per-file API for tiny diffs),
-     * chunks each file, and flushes 64-chunk batches concurrently (max 2 in flight) so peak heap stays tiny.
+     * Streams files (via single-request zipball for bulk indexing or parallel HTTP/2 raw CDN for small/asset-heavy repos),
+     * chunks each file, and flushes 64-chunk batches concurrently with decoupled backpressure so peak heap stays tiny.
      */
     private StreamingStats streamIndexFiles(
             Repository repo,
@@ -348,6 +356,8 @@ public class IndexingService {
             List<String> newFiles,
             List<String> changedFiles,
             int totalFiles,
+            long eligibleBytes,
+            long skippedBytes,
             AtomicBoolean embeddingFailed) {
 
         List<String> filesToFetch = new ArrayList<>(newFiles);
@@ -361,8 +371,14 @@ public class IndexingService {
         AtomicInteger filesDone = new AtomicInteger(0);
         String mode = "zipball";
 
+        // Skip downloading a multi-MB asset-heavy zipball when only a small set of public code files is needed
+        boolean preferRawCdn = !repo.isPrivate()
+                && filesToFetch.size() <= 20
+                && skippedBytes > 2_000_000L
+                && skippedBytes > eligibleBytes * 4;
+
         boolean zipballSucceeded = false;
-        if (filesToFetch.size() >= ZIPBALL_FILE_THRESHOLD) {
+        if (filesToFetch.size() >= ZIPBALL_FILE_THRESHOLD && !preferRawCdn) {
             try {
                 log.info("{} [INDEX] streaming zipball (1 GitHub call) repoId={} targetFiles={}",
                         Instant.now(), repoId, filesToFetch.size());
@@ -379,13 +395,14 @@ public class IndexingService {
                         });
                 zipballSucceeded = true;
             } catch (Exception e) {
-                log.warn("{} [INDEX] zipball stream failed for repoId={}, falling back to per-file API: {}",
+                log.warn("{} [INDEX] zipball stream failed for repoId={}, falling back to per-file fetch: {}",
                         Instant.now(), repoId, e.getMessage());
             }
         }
 
         if (!zipballSucceeded) {
-            mode = "contents-api";
+            boolean useRawCdn = !repo.isPrivate();
+            mode = useRawCdn ? "raw-cdn" : "contents-api";
             List<CompletableFuture<Void>> fetchFutures = new ArrayList<>(filesToFetch.size());
             Semaphore fetchSemaphore = new Semaphore(PARALLEL_FETCH_WORKERS);
 
@@ -394,8 +411,14 @@ public class IndexingService {
                 fetchFutures.add(CompletableFuture.runAsync(() -> {
                     try {
                         fetchSemaphore.acquire();
-                        rateLimiter.pause();
-                        String content = gitHubApiClient.getFileContent(repo.getOwner(), repo.getName(), path);
+                        String content;
+                        if (useRawCdn) {
+                            content = gitHubApiClient.getRawFileContent(
+                                    repo.getOwner(), repo.getName(), repo.getDefaultBranch(), path);
+                        } else {
+                            rateLimiter.pause();
+                            content = gitHubApiClient.getFileContent(repo.getOwner(), repo.getName(), path);
+                        }
                         int done = filesDone.incrementAndGet();
                         if (content != null) {
                             List<Document> chunks = codeChunker.chunkFile(userId, repoId.toString(), path, content);
@@ -432,9 +455,12 @@ public class IndexingService {
      * with bounded concurrency (PARALLEL_EMBED_BATCHES = 2), keeping memory bounded even on large repos.
      */
     private final class StreamingBatchFlusher {
+        private static final int MAX_BUFFERED_BATCHES = 6; // Decouples zipball stream from Cloudflare/Neon while bounding RAM (<1.5MB)
+
         private final UUID repoId;
         private final int totalFiles;
         private final AtomicBoolean embeddingFailed;
+        private final Semaphore queueSemaphore = new Semaphore(MAX_BUFFERED_BATCHES);
         private final Semaphore embedSemaphore = new Semaphore(PARALLEL_EMBED_BATCHES);
         private final List<Document> buffer = new ArrayList<>(VECTOR_BATCH_SIZE);
         private final List<CompletableFuture<Void>> inFlight = new ArrayList<>();
@@ -506,15 +532,18 @@ public class IndexingService {
 
         private void submitBatch(List<Document> batch, int start, int end) {
             try {
-                // Backpressure: at most PARALLEL_EMBED_BATCHES in flight at once on dedicated virtual threads
-                embedSemaphore.acquire();
+                // Bounded queue backpressure (6 batches max) keeps zipball download flowing without stalling on Cloudflare/Neon
+                queueSemaphore.acquire();
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
                 embeddingFailed.set(true);
                 return;
             }
             CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                boolean acquiredEmbed = false;
                 try {
+                    embedSemaphore.acquire();
+                    acquiredEmbed = true;
                     boolean success = addBatchWithRetry(batch, repoId, start, end);
                     if (!success) {
                         log.error("Failed to store batch {}-{} for repo {} - embeddingFailed flag set", start, end, repoId);
@@ -525,8 +554,14 @@ public class IndexingService {
                                 "Embedded " + done + "/" + totalChunks.get() + " chunks...",
                                 lastFilesDone.get(), totalFiles, done, totalChunks.get(), false);
                     }
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    embeddingFailed.set(true);
                 } finally {
-                    embedSemaphore.release();
+                    if (acquiredEmbed) {
+                        embedSemaphore.release();
+                    }
+                    queueSemaphore.release();
                 }
             }, effectiveIoExecutor());
             synchronized (inFlight) {
@@ -565,8 +600,10 @@ public class IndexingService {
         Map<String, String> result = new HashMap<>();
         int totalBlobs = 0;
         int skippedCount = 0;
+        long eligibleBytes = 0L;
+        long skippedBytes = 0L;
         if (tree == null || tree.get("tree") == null) {
-            return new FilteredTree(result, 0, 0);
+            return new FilteredTree(result, 0, 0, 0L, 0L);
         }
 
         List<Map<String, Object>> entries = (List<Map<String, Object>>) tree.get("tree");
@@ -577,12 +614,14 @@ public class IndexingService {
             long sizeBytes = parseBlobSize(entry.get("size"));
             if (!fileFilter.isEligible(path, sizeBytes, maxFileBytes)) {
                 skippedCount++;
+                skippedBytes += sizeBytes;
                 continue;
             }
+            eligibleBytes += sizeBytes;
             String sha = String.valueOf(entry.get("sha"));
             result.put(path, sha);
         }
-        return new FilteredTree(result, totalBlobs, skippedCount);
+        return new FilteredTree(result, totalBlobs, skippedCount, eligibleBytes, skippedBytes);
     }
 
     private static long parseBlobSize(Object sizeObj) {
@@ -822,7 +861,7 @@ public class IndexingService {
         return false;
     }
 
-    private record FilteredTree(Map<String, String> eligibleFiles, int totalBlobs, int skippedCount) {}
+    private record FilteredTree(Map<String, String> eligibleFiles, int totalBlobs, int skippedCount, long eligibleBytes, long skippedBytes) {}
 
     private record StreamingStats(String mode, int filesProcessed, int totalChunks) {}
 

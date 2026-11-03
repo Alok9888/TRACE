@@ -1,7 +1,9 @@
 
 "use client";
 
+import { useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
   ExternalLink,
@@ -20,16 +22,29 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import { getRepoProgress, useStartIndexing } from "@/hooks/use-repos";
-import type { Repository } from "@/lib/api";
+import { api, type Repository } from "@/lib/api";
+import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 
 export function RepoCard({ repo }: { repo: Repository }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const indexMutation = useStartIndexing();
   const isIndexing =
     repo.indexStatus === "INDEXING" || indexMutation.isPending;
   const isFailed = repo.indexStatus === "FAILED";
   const progress = getRepoProgress(repo);
+
+  const prefetchChat = useCallback(() => {
+    if (repo.indexStatus !== "READY") return;
+    router.prefetch(`/chat/${repo.id}`);
+    queryClient.setQueryData(queryKeys.repos.detail(repo.id), repo);
+    void queryClient.prefetchQuery({
+      queryKey: queryKeys.chat.sessions(repo.id),
+      queryFn: () => api.listSessions(repo.id),
+      staleTime: 30_000,
+    });
+  }, [queryClient, repo, router]);
 
   function openChat() {
     router.push(`/chat/${repo.id}`);
@@ -48,6 +63,7 @@ export function RepoCard({ repo }: { repo: Repository }) {
 
   return (
     <article
+      onMouseEnter={prefetchChat}
       className={cn(
         "group flex flex-col overflow-hidden rounded-2xl border border-dashed bg-card/80 shadow-md shadow-foreground/5 transition-all",
         isFailed

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, FolderGit2, MessageSquareCode, Sparkles } from "lucide-react";
 
@@ -16,6 +16,11 @@ export default function HomePage() {
   const [isClicked, setIsClicked] = useState(false);
   const hasClickedRef = useRef(false);
   const router = useRouter();
+
+  // Wake a sleeping Render backend while the user is pasting a GitHub URL
+  useEffect(() => {
+    void fetch("/backend/api/health", { cache: "no-store" }).catch(() => {});
+  }, []);
 
   function analyze() {
     if (hasClickedRef.current) return;

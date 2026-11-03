@@ -32,11 +32,8 @@ public class CodeContextRetriever {
                 Instant.now(), repositoryId, question.length(), RagSettings.TOP_K_CHUNKS, RagSettings.SIMILARITY_THRESHOLD);
 
         // Build filter expression as string - compatible with Spring AI 2.0.0 PGVector
-        String filterExpression = String.format(
-            "%s == '%s' && %s == '%s'",
-            RagSettings.METADATA_REPO_ID, repositoryId.toString(),
-            RagSettings.METADATA_USER_ID, userId.toString()
-        );
+        String filterExpression = RagSettings.METADATA_REPO_ID + " == '" + repositoryId
+                + "' && " + RagSettings.METADATA_USER_ID + " == '" + userId + "'";
 
         var search = SearchRequest.builder()
                 .query(question)

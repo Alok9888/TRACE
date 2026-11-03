@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 
 import { ChatComposer } from "@/components/chat/chat-composer";
@@ -189,8 +189,28 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
 
   const repo = repoQuery.data;
 
+  // Stabilize merged repo prop so 60fps streaming updates in ChatView never re-render memoized ChatSidebar
+  const sidebarRepo = useMemo(() => {
+    if (!repo) return null;
+    return {
+      ...repo,
+      indexStatus: indexStatus ?? repo.indexStatus,
+      filesProcessed: statusQuery.data?.filesProcessed ?? repo.filesProcessed,
+      filesTotal: statusQuery.data?.filesTotal ?? repo.filesTotal,
+      chunkCount: statusQuery.data?.chunkCount ?? repo.chunkCount,
+      errorMessage: statusQuery.data?.errorMessage ?? repo.errorMessage,
+    };
+  }, [
+    repo,
+    indexStatus,
+    statusQuery.data?.filesProcessed,
+    statusQuery.data?.filesTotal,
+    statusQuery.data?.chunkCount,
+    statusQuery.data?.errorMessage,
+  ]);
+
   // Only show "Loading chat..." when !repo && !isLoading (no initialUrl)
-  if (!repo) {
+  if (!repo || !sidebarRepo) {
     return (
       <AppShell title="Loading chat…">
         <div className="grid flex-1 gap-4 p-4 md:grid-cols-[18rem_1fr]">
@@ -218,15 +238,7 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
     >
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <ChatSidebar
-          repo={{
-            ...repo,
-            indexStatus: indexStatus ?? repo.indexStatus,
-            filesProcessed:
-              statusQuery.data?.filesProcessed ?? repo.filesProcessed,
-            filesTotal: statusQuery.data?.filesTotal ?? repo.filesTotal,
-            chunkCount: statusQuery.data?.chunkCount ?? repo.chunkCount,
-            errorMessage: statusQuery.data?.errorMessage ?? repo.errorMessage,
-          }}
+          repo={sidebarRepo}
           sessionId={sessionId}
           onSelectSession={setSelectedSessionId}
         />

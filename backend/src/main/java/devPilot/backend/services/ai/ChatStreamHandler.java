@@ -2,6 +2,7 @@ package devPilot.backend.services.ai;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -35,6 +36,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -105,6 +107,9 @@ public class ChatStreamHandler {
     @Autowired
     @Qualifier("ioExecutor")
     private AsyncTaskExecutor ioExecutor;
+
+    @Autowired(required = false)
+    private JdbcTemplate jdbcTemplate;
 
     public ChatStreamHandler(
             @Qualifier("openAiChatModel") ChatModel groqChatModel,
@@ -197,50 +202,53 @@ public class ChatStreamHandler {
             sessionId = streamContext.sessionId();
             UUID finalSessionId = sessionId;
 
-            // Start persisting the user message asynchronously so it overlaps with QA cache / RAG retrieval
-            CompletableFuture<ChatMessage> userMsgFuture = CompletableFuture.supplyAsync(
-                    () -> chatMessageRepository.save(ChatMessage.builder()
-                            .sessionId(finalSessionId)
-                            .role(MessageRole.USER)
-                            .content(question)
-                            .build()),
-                    ioExecutor);
+            UUID userMessageId = UUID.randomUUID();
+            Instant userCreatedAt = Instant.now();
+            ChatMessageResponse userResponse = new ChatMessageResponse(
+                    userMessageId, MessageRole.USER, question, List.of(), userCreatedAt);
 
-            // Check Q&A response cache immediately (keyed by repo + index version + normalized question)
+            // Check Q&A response cache immediately (0ms when ChatContextCache hits)
             String qaCacheKey = buildQaCacheKey(streamContext.repositoryId(), streamContext.repositoryVersion(), question);
             CachedQaAnswer cachedAnswer = getCachedQaAnswer(qaCacheKey);
             if (cachedAnswer != null) {
                 log.info("{} [CHAT] qaCacheHit=true sessionId={} repo={} savedEmbedAndLlm=true latencyMs={}",
                         now(), sessionId, streamContext.repositoryId(), System.currentTimeMillis() - requestStartMs);
                 heartbeat.cancel(false);
-                ChatMessage savedUser = userMsgFuture.get(10, TimeUnit.SECONDS);
-                safeSend(emitter, sseLock, SseEmitter.event().name("user_message").data(toMessageResponse(savedUser)));
+                UUID assistantId = UUID.randomUUID();
+                Instant assistantCreatedAt = ensureAfter(userCreatedAt);
+                String citationsJson = citationMapper.toJson(cachedAnswer.citations);
+
+                // Emit all SSE events immediately and persist both rows in one async batched JDBC call
+                safeSend(emitter, sseLock, SseEmitter.event().name("user_message").data(userResponse));
                 anyTokenSent.set(true);
                 safeSend(emitter, sseLock, SseEmitter.event().name("token").data(cachedAnswer.answer));
-                ChatMessage assistant = chatMessageRepository.save(ChatMessage.builder()
-                        .sessionId(sessionId)
-                        .role(MessageRole.ASSISTANT)
-                        .content(cachedAnswer.answer)
-                        .citations(citationMapper.toJson(cachedAnswer.citations))
-                        .build());
                 safeSend(emitter, sseLock, SseEmitter.event().name("model").data(Map.of(
                         "model", cachedAnswer.model,
                         "provider", cachedAnswer.provider,
                         "fallback", cachedAnswer.usedFallback,
                         "cached", true)));
-                safeSend(emitter, sseLock, SseEmitter.event().name("assistant_message").data(toMessageResponse(assistant)));
+                safeSend(emitter, sseLock, SseEmitter.event().name("assistant_message").data(
+                        new ChatMessageResponse(assistantId, MessageRole.ASSISTANT, cachedAnswer.answer,
+                                cachedAnswer.citations, assistantCreatedAt)));
                 sendDone(emitter, sseLock, terminalSent, sessionId);
+
+                persistMessagesAsync(List.of(
+                        new PendingMessage(userMessageId, finalSessionId, MessageRole.USER, question, null, userCreatedAt),
+                        new PendingMessage(assistantId, finalSessionId, MessageRole.ASSISTANT, cachedAnswer.answer, citationsJson, assistantCreatedAt)
+                ));
                 return;
             }
 
-            // Kick off RAG retrieval BEFORE waiting for userMsgFuture so DB INSERT overlaps with Cloudflare + PgVector!
+            // Emit user_message immediately and persist it in the background while RAG retrieval runs in parallel
+            persistMessagesAsync(List.of(
+                    new PendingMessage(userMessageId, finalSessionId, MessageRole.USER, question, null, userCreatedAt)
+            ));
+            safeSend(emitter, sseLock, SseEmitter.event().name("user_message").data(userResponse));
+
             stage.set("EMBED/VECTOR");
             log.info("{} [EMBED] start sessionId={}", now(), sessionId);
             Future<RetrievedContext> retrieval = ragExecutor.submit(
                     () -> codeContextRetriever.retrieve(streamContext.userId(), streamContext.repositoryId(), question));
-
-            ChatMessage savedUser = userMsgFuture.get(10, TimeUnit.SECONDS);
-            safeSend(emitter, sseLock, SseEmitter.event().name("user_message").data(toMessageResponse(savedUser)));
 
             RetrievedContext retrievedContext;
             try {
@@ -389,27 +397,33 @@ public class ChatStreamHandler {
             }
 
             boolean usedFallback = !"Groq".equals(successfulProvider) || !models.isEmpty() && !successfulModel.equals(models.get(0));
-            safeSend(emitter, sseLock, SseEmitter.event().name("model").data(Map.of("model", successfulModel,
-                    "provider", successfulProvider, "fallback", usedFallback)));
+            String finalReplyText = fullReply.toString();
+            List<CitationDto> finalCitations = List.copyOf(retrievedContext.citations());
+            UUID assistantId = UUID.randomUUID();
+            Instant assistantCreatedAt = ensureAfter(userCreatedAt);
+            String citationsJson = citationMapper.toJson(finalCitations);
 
-            ChatMessage assistant = chatMessageRepository.save(ChatMessage.builder()
-                    .sessionId(sessionId)
-                    .role(MessageRole.ASSISTANT)
-                    .content(fullReply.toString())
-                    .citations(citationMapper.toJson(retrievedContext.citations()))
-                    .build());
-            if (anyTokenSent.get() && !fullReply.isEmpty()) {
+            if (anyTokenSent.get() && !finalReplyText.isEmpty()) {
                 putCachedQaAnswer(qaCacheKey, new CachedQaAnswer(
-                        fullReply.toString(),
-                        List.copyOf(retrievedContext.citations()),
+                        finalReplyText,
+                        finalCitations,
                         successfulModel,
                         successfulProvider,
                         usedFallback,
                         System.currentTimeMillis()));
             }
+            safeSend(emitter, sseLock, SseEmitter.event().name("model").data(Map.of("model", successfulModel,
+                    "provider", successfulProvider, "fallback", usedFallback)));
             log.info("{} [SSE] sending assistant_message sessionId={}", now(), sessionId);
-            safeSend(emitter, sseLock, SseEmitter.event().name("assistant_message").data(toMessageResponse(assistant)));
+            safeSend(emitter, sseLock, SseEmitter.event().name("assistant_message").data(
+                    new ChatMessageResponse(assistantId, MessageRole.ASSISTANT, finalReplyText,
+                            finalCitations, assistantCreatedAt)));
             sendDone(emitter, sseLock, terminalSent, sessionId);
+
+            // Persist assistant reply asynchronously after closing the SSE stream so DB latency adds 0ms to user UX
+            persistMessagesAsync(List.of(
+                    new PendingMessage(assistantId, finalSessionId, MessageRole.ASSISTANT, finalReplyText, citationsJson, assistantCreatedAt)
+            ));
         } catch (Exception error) {
             Throwable cause = error instanceof ExecutionException && error.getCause() != null
                     ? error.getCause() : error;
@@ -627,6 +641,62 @@ public class ChatStreamHandler {
     private void putCachedQaAnswer(String key, CachedQaAnswer value) {
         qaCache.put(key, value);
     }
+
+    private static Instant ensureAfter(Instant earlier) {
+        Instant now = Instant.now();
+        return now.isAfter(earlier) ? now : earlier.plusMillis(1);
+    }
+
+    private void persistMessagesAsync(List<PendingMessage> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return;
+        }
+        CompletableFuture.runAsync(() -> persistMessages(messages), ioExecutor);
+    }
+
+    private void persistMessages(List<PendingMessage> messages) {
+        if (jdbcTemplate != null) {
+            try {
+                jdbcTemplate.batchUpdate(
+                        "INSERT INTO chat_messages (id, session_id, role, content, citations, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                        messages,
+                        messages.size(),
+                        (ps, msg) -> {
+                            ps.setObject(1, msg.id);
+                            ps.setObject(2, msg.sessionId);
+                            ps.setString(3, msg.role.name());
+                            ps.setString(4, msg.content);
+                            ps.setString(5, msg.citations);
+                            ps.setTimestamp(6, Timestamp.from(msg.createdAt));
+                        });
+                return;
+            } catch (Exception ex) {
+                log.warn("Direct JDBC chat_messages batch insert failed, falling back to JPA: {}", ex.getMessage());
+            }
+        }
+        try {
+            List<ChatMessage> entities = messages.stream()
+                    .map(msg -> ChatMessage.builder()
+                            .sessionId(msg.sessionId)
+                            .role(msg.role)
+                            .content(msg.content)
+                            .citations(msg.citations)
+                            .createdAt(msg.createdAt)
+                            .build())
+                    .toList();
+            chatMessageRepository.saveAll(entities);
+        } catch (Exception ex) {
+            log.error("Failed to persist chat messages asynchronously: {}", ex.getMessage(), ex);
+        }
+    }
+
+    private record PendingMessage(
+            UUID id,
+            UUID sessionId,
+            MessageRole role,
+            String content,
+            String citations,
+            Instant createdAt) {}
 
     private record CachedQaAnswer(
             String answer,

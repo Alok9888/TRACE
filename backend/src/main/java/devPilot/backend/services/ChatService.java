@@ -20,6 +20,7 @@ import devPilot.backend.exceptions.BadRequestException;
 import devPilot.backend.exceptions.NotFoundException;
 import devPilot.backend.repository.ChatMessageRepository;
 import devPilot.backend.repository.ChatSessionRepository;
+import devPilot.backend.services.ai.ChatContextCache;
 import devPilot.backend.services.ai.ChatStreamHandler;
 import devPilot.backend.services.ai.ChatStreamContext;
 import devPilot.backend.services.ai.CitationMapper;
@@ -43,6 +44,7 @@ public class ChatService {
     private final RepoService repoService;
     private final ChatStreamHandler chatStreamHandler;
     private final CitationMapper citationMapper;
+    private final ChatContextCache chatContextCache;
 
     @Transactional
     public ChatSessionResponse createSession(UUID userId, CreateChatSessionRequest request) {
@@ -96,6 +98,11 @@ public class ChatService {
     }
 
     private ChatStreamContext prepareStreamContext(UUID userId, UUID sessionId) {
+        ChatStreamContext cached = chatContextCache.get(userId, sessionId);
+        if (cached != null) {
+            return cached;
+        }
+
         log.info("{} [CHAT] session+repo lookup start sessionId={}", Instant.now(), sessionId);
         ChatSessionRepository.SessionRepoSummary summary = chatSessionRepository
                 .findSessionWithRepo(sessionId, userId)
@@ -111,12 +118,14 @@ public class ChatService {
                 ? summary.treeSha()
                 : (summary.indexedAt() != null ? summary.indexedAt().toString() : "v0");
 
-        return new ChatStreamContext(
+        ChatStreamContext context = new ChatStreamContext(
                 userId,
                 summary.sessionId(),
                 summary.repositoryId(),
                 summary.repositoryFullName(),
                 repoVersion);
+        chatContextCache.put(userId, sessionId, context);
+        return context;
     }
 
     private ChatSessionResponse toSessionResponse(ChatSession session) {

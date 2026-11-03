@@ -103,6 +103,47 @@ public class GithubApiClient {
     }
 
     /**
+     * Fast-path fetch for public repository files via GitHub's raw CDN (HTTP/2, no REST API rate limit, no Base64).
+     * Automatically falls back to the GitHub Contents API if raw CDN returns non-200 (e.g., private repo).
+     */
+    public String getRawFileContent(String owner, String repo, String branch, String path) {
+        try {
+            String encodedPath = encodePathSegments(path);
+            String url = "https://raw.githubusercontent.com/"
+                    + URLEncoder.encode(owner, StandardCharsets.UTF_8) + "/"
+                    + URLEncoder.encode(repo, StandardCharsets.UTF_8) + "/"
+                    + URLEncoder.encode(branch, StandardCharsets.UTF_8) + "/"
+                    + encodedPath;
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("User-Agent", "DevPilot")
+                    .timeout(Duration.ofSeconds(15))
+                    .GET()
+                    .build();
+
+            HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (response.statusCode() == 200) {
+                return response.body();
+            }
+        } catch (Exception ex) {
+            log.debug("[GITHUB] raw CDN fetch failed for {}/{}/{}, falling back to contents API: {}",
+                    owner, repo, path, ex.getMessage());
+        }
+        return getFileContent(owner, repo, path);
+    }
+
+    private static String encodePathSegments(String path) {
+        String[] segments = path.split("/");
+        StringBuilder sb = new StringBuilder(path.length() + 16);
+        for (int i = 0; i < segments.length; i++) {
+            if (i > 0) sb.append('/');
+            sb.append(URLEncoder.encode(segments[i], StandardCharsets.UTF_8).replace("+", "%20"));
+        }
+        return sb.toString();
+    }
+
+    /**
      * Streams a repository's zipball in a single GitHub HTTP request, reading one eligible file at a time
      * with a strict byte ceiling so large repos never exhaust heap or GitHub API rate limits.
      *

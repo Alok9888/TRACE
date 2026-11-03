@@ -103,7 +103,7 @@ export function IndexingState({
     intervalRef.current = setInterval(() => {
       subtextIndexRef.current = (subtextIndexRef.current + 1) % allDetails.length;
       setSubtext(allDetails[subtextIndexRef.current]);
-    }, 500);
+    }, 2500);
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);

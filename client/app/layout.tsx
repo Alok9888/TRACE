@@ -8,6 +8,10 @@ export const metadata: Metadata = {
   description: "Analyze public GitHub repositories and chat with their code.",
 };
 
+const backendOrigin = (
+  process.env.NEXT_PUBLIC_API_BASE_URL || "https://devpilot-backend-iso1.onrender.com"
+).replace(/\/$/, "");
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -15,6 +19,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="h-full antialiased" suppressHydrationWarning>
+      <head>
+        <link rel="preconnect" href={backendOrigin} crossOrigin="anonymous" />
+        <link rel="dns-prefetch" href={backendOrigin} />
+      </head>
       <body className="min-h-full flex flex-col">
         <QueryProvider>
         <ThemeProvider
