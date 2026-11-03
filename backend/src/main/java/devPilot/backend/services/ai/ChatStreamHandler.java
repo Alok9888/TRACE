@@ -295,7 +295,7 @@ public class ChatStreamHandler {
                     }
 
                     groqChatClient.prompt()
-                            .options(optionsBuilder.build())
+                            .options(optionsBuilder)
                             .system(systemPrompt)
                             .user(prompt)
                             .stream()
