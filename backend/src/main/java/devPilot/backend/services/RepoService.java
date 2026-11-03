@@ -34,6 +34,7 @@ public class RepoService {
     private final GithubApiClient gitHubApiClient;
     private final IndexingService indexingService;
     private final Set<String> analyzeTasks = ConcurrentHashMap.newKeySet();
+    private final ConcurrentHashMap<String, Object> prepareLocks = new ConcurrentHashMap<>();
 
     @Transactional
     public Repository analyzePublicRepo(UUID userId, String owner, String name) {
@@ -59,33 +60,25 @@ public class RepoService {
     
     @Transactional(readOnly = true)
     public List<RepositoryResponse> listStored(UUID userId) {
-        return repositoryRepository.findByUserIdOrderByFullNameAsc(userId).stream()
-                .map(this::toResponse)
-                .toList();
+        return repositoryRepository.findResponsesByUserIdOrderByFullNameAsc(userId);
     }
-    
+
+    @Transactional(readOnly = true)
+    public RepositoryResponse getResponse(UUID repoId, UUID userId) {
+        return repositoryRepository.findResponseByIdAndUserId(repoId, userId)
+                .orElseThrow(() -> new NotFoundException("Repository not found"));
+    }
+
     @Transactional(readOnly = true)
     public Repository requireOwned(UUID repoId, UUID userId) {
         return repositoryRepository.findByIdAndUserId(repoId, userId)
                 .orElseThrow(() -> new NotFoundException("Repository not found"));
     }
 
-    
     @Transactional(readOnly = true)
     public IndexStatusResponse status(UUID repoId, UUID userId) {
-        Repository repo = requireOwned(repoId, userId);
-        return new IndexStatusResponse(
-                repo.getId(),
-                repo.getIndexStatus(),
-                repo.getFilesTotal(),
-                repo.getFilesProcessed(),
-                repo.getChunkCount(),
-                repo.getChunksTotal(),
-                repo.getChunksProcessed(),
-                repo.getIndexingStage(),
-                repo.getIndexingDetail(),
-                repo.getIndexedAt(),
-                repo.getErrorMessage());
+        return repositoryRepository.findStatusByIdAndUserId(repoId, userId)
+                .orElseThrow(() -> new NotFoundException("Repository not found"));
     }
 
      public RepositoryResponse toResponse(Repository repo) {
@@ -116,39 +109,41 @@ public class RepoService {
     }
 
     @Transactional
-    public synchronized AnalyzeDecision prepareAnalyze(UUID userId, String owner, String name, boolean force) {
-        Repository existing = repositoryRepository.findByUserIdOrderByFullNameAsc(userId).stream()
-                .filter(repo -> repo.getOwner().equalsIgnoreCase(owner)
-                        && repo.getName().equalsIgnoreCase(name))
-                .findFirst()
-                .orElse(null);
-        if (existing != null) {
-            if (existing.getIndexStatus() == IndexStatus.READY && !force) {
-                return new AnalyzeDecision(existing, false);
+    public AnalyzeDecision prepareAnalyze(UUID userId, String owner, String name, boolean force) {
+        String lockKey = userId + ":" + owner.toLowerCase(Locale.ROOT) + "/" + name.toLowerCase(Locale.ROOT);
+        Object repoLock = prepareLocks.computeIfAbsent(lockKey, k -> new Object());
+        synchronized (repoLock) {
+            Repository existing = repositoryRepository
+                    .findFirstByUserIdAndOwnerIgnoreCaseAndNameIgnoreCase(userId, owner, name)
+                    .orElse(null);
+            if (existing != null) {
+                if (existing.getIndexStatus() == IndexStatus.READY && !force) {
+                    return new AnalyzeDecision(existing, false);
+                }
+                Instant recentCutoff = Instant.now().minus(Duration.ofMinutes(10));
+                boolean recentlyUpdated = existing.getUpdatedAt() != null
+                        && !existing.getUpdatedAt().isBefore(recentCutoff);
+                boolean active = existing.getIndexStatus() == IndexStatus.INDEXING
+                        && (recentlyUpdated || indexingService.isIndexingActive(existing.getId()));
+                if (active) {
+                    log.info("Analyze already active for {}/{}, returning existing repository", owner, name);
+                    return new AnalyzeDecision(existing, false);
+                }
+                return new AnalyzeDecision(existing, true);
             }
-            Instant recentCutoff = Instant.now().minus(Duration.ofMinutes(10));
-            boolean recentlyUpdated = existing.getUpdatedAt() != null
-                    && !existing.getUpdatedAt().isBefore(recentCutoff);
-            boolean active = existing.getIndexStatus() == IndexStatus.INDEXING
-                    && (recentlyUpdated || indexingService.isIndexingActive(existing.getId()));
-            if (active) {
-                log.info("Analyze already active for {}/{}, returning existing repository", owner, name);
-                return new AnalyzeDecision(existing, false);
-            }
-            return new AnalyzeDecision(existing, true);
-        }
 
-        Repository repo = new Repository();
-        repo.setUserId(userId);
-        repo.setGithubRepoId(placeholderGithubId(owner, name));
-        repo.setOwner(owner);
-        repo.setName(name);
-        repo.setFullName(owner + "/" + name);
-        repo.setDefaultBranch("main");
-        repo.setIndexStatus(IndexStatus.INDEXING);
-        repo.setIndexingStage("creating");
-        repo.setIndexingDetail("Creating repo row...");
-        return new AnalyzeDecision(repositoryRepository.save(repo), true);
+            Repository repo = new Repository();
+            repo.setUserId(userId);
+            repo.setGithubRepoId(placeholderGithubId(owner, name));
+            repo.setOwner(owner);
+            repo.setName(name);
+            repo.setFullName(owner + "/" + name);
+            repo.setDefaultBranch("main");
+            repo.setIndexStatus(IndexStatus.INDEXING);
+            repo.setIndexingStage("creating");
+            repo.setIndexingDetail("Creating repo row...");
+            return new AnalyzeDecision(repositoryRepository.save(repo), true);
+        }
     }
 
     private static long placeholderGithubId(String owner, String name) {
@@ -202,6 +197,10 @@ public class RepoService {
             repo.setHtmlUrl(remote.get("html_url") != null ? String.valueOf(remote.get("html_url")) : null);
             repo.setDescription(remote.get("description") != null ? String.valueOf(remote.get("description")) : null);
             repo.setUpdatedAt(Instant.now());
+            if (force) {
+                repo.setTreeSha(null);
+                repo.setIndexedFilesJson(null);
+            }
             repo.setIndexStatus(IndexStatus.INDEXING);
             repo.setIndexingStage("fetching");
             repo.setIndexingDetail("Fetching file list...");
@@ -213,9 +212,8 @@ public class RepoService {
 
             repo = repositoryRepository.save(repo);
 
-            // Start indexing async
-            indexingService.startIndexing(repo.getId(), userId);
-            indexingService.indexAsync(repo.getId(), userId);
+            // Repo row is already persisted with IndexStatus.INDEXING; trigger async indexing directly
+            indexingService.indexAsync(repo.getId(), userId, force);
         } catch (Exception e) {
             log.error("Background analyze failed for {}/{}: {}", owner, name, e.getMessage(), e);
         } finally {
@@ -225,14 +223,9 @@ public class RepoService {
 
     @Transactional(readOnly = true)
     public IndexStatusResponse statusByOwnerName(UUID userId, String owner, String name) {
-        Repository repo = repositoryRepository
-                .findByUserIdAndGithubRepoId(userId, placeholderGithubId(owner, name))
-                .orElseGet(() -> repositoryRepository.findByUserIdOrderByFullNameAsc(userId).stream()
-                        .filter(candidate -> candidate.getOwner().equalsIgnoreCase(owner)
-                                && candidate.getName().equalsIgnoreCase(name))
-                        .findFirst()
-                        .orElse(null));
-        if (repo == null) {
+        List<IndexStatusResponse> matches = repositoryRepository
+                .findStatusByUserIdAndOwnerAndName(userId, owner, name);
+        if (matches.isEmpty()) {
             return new IndexStatusResponse(
                     null,
                     IndexStatus.INDEXING,
@@ -243,22 +236,12 @@ public class RepoService {
                     null
             );
         }
-        if ("creating".equals(repo.getIndexingStage())) {
+        IndexStatusResponse status = matches.get(0);
+        if ("creating".equals(status.indexingStage())) {
             return new IndexStatusResponse(
                     null, IndexStatus.INDEXING, 0, 0, 0, 0, 0,
                     "creating", "Creating repo row...", null, null);
         }
-        return new IndexStatusResponse(
-                repo.getId(),
-                repo.getIndexStatus(),
-                repo.getFilesTotal(),
-                repo.getFilesProcessed(),
-                repo.getChunkCount(),
-                repo.getChunksTotal(),
-                repo.getChunksProcessed(),
-                repo.getIndexingStage(),
-                repo.getIndexingDetail(),
-                repo.getIndexedAt(),
-                repo.getErrorMessage());
+        return status;
     }
 }

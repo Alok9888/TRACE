@@ -92,37 +92,31 @@ public class ChatService {
         // Keep all database work inside the managed SSE task. Returning the emitter first
         // ensures lookup or pool delays cannot prevent the response from opening.
         return chatStreamHandler.stream(sessionId, userContent,
-                () -> prepareStreamContext(userId, sessionId, userContent));
+                () -> prepareStreamContext(userId, sessionId));
     }
 
-    private ChatStreamContext prepareStreamContext(UUID userId, UUID sessionId, String userContent) {
-        log.info("{} [CHAT] session lookup start sessionId={}", Instant.now(), sessionId);
-        ChatSession session = requireSession(userId, sessionId);
-        log.info("{} [CHAT] session lookup done sessionId={}", Instant.now(), sessionId);
+    private ChatStreamContext prepareStreamContext(UUID userId, UUID sessionId) {
+        log.info("{} [CHAT] session+repo lookup start sessionId={}", Instant.now(), sessionId);
+        ChatSessionRepository.SessionRepoSummary summary = chatSessionRepository
+                .findSessionWithRepo(sessionId, userId)
+                .orElseThrow(() -> new NotFoundException("Chat session not found"));
 
-        log.info("{} [CHAT] repository lookup start sessionId={} repositoryId={}",
-                Instant.now(), sessionId, session.getRepositoryId());
-        Repository repo = repoService.requireOwned(session.getRepositoryId(), userId);
-        if (repo.getIndexStatus() != IndexStatus.READY) {
+        if (summary.indexStatus() != IndexStatus.READY) {
             throw new BadRequestException("Repository is not ready for chat");
         }
-        log.info("{} [CHAT] repository ready sessionId={} repositoryId={}", Instant.now(), sessionId, repo.getId());
+        log.info("{} [CHAT] session+repo ready sessionId={} repositoryId={}",
+                Instant.now(), sessionId, summary.repositoryId());
 
-        log.info("{} [CHAT] save user message start sessionId={}", Instant.now(), sessionId);
-        ChatMessage userMessage = chatMessageRepository.save(ChatMessage.builder()
-                .sessionId(session.getId())
-                .role(MessageRole.USER)
-                .content(userContent)
-                .build());
-        log.info("{} [CHAT] save user message done sessionId={} messageId={}",
-                Instant.now(), sessionId, userMessage.getId());
+        String repoVersion = summary.treeSha() != null && !summary.treeSha().isBlank()
+                ? summary.treeSha()
+                : (summary.indexedAt() != null ? summary.indexedAt().toString() : "v0");
 
         return new ChatStreamContext(
                 userId,
-                session.getId(),
-                toMessageResponse(userMessage),
-                repo.getId(),
-                repo.getFullName());
+                summary.sessionId(),
+                summary.repositoryId(),
+                summary.repositoryFullName(),
+                repoVersion);
     }
 
     private ChatSessionResponse toSessionResponse(ChatSession session) {

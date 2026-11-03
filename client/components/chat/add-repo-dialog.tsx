@@ -105,10 +105,10 @@ export function AddRepoDialog({
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button onClick={handleAnalyze} disabled={!repoUrl.trim()}>
+            <Button type="submit" disabled={!repoUrl.trim()}>
               <ArrowRight className="mr-2 h-4 w-4" />
               Analyze
             </Button>

@@ -28,13 +28,18 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
   const effectiveRepoId = resolvedRepoId ?? routeRepoId ?? "";
   const shouldFetchRepo = Boolean(effectiveRepoId);
 
-  const repoQuery = useRepository(effectiveRepoId, { enabled: shouldFetchRepo });
+  // Single-poller strategy: useRepository fetches repo details once (no duplicate 500ms poll),
+  // and useIndexStatus polls only while indexing is NOT already READY.
+  const repoQuery = useRepository(effectiveRepoId, {
+    enabled: shouldFetchRepo,
+    pollWhileIndexing: false,
+  });
 
   // Use URL-based status polling when we have initialUrl but no repo ID yet
   const urlStatusQuery = useIndexStatusByUrl(initialUrl ?? "", Boolean(initialUrl && !effectiveRepoId));
-  // Keep polling the status endpoint until it reports READY, even if the
-  // repository detail query finishes first.
-  const repoStatusQuery = useIndexStatus(effectiveRepoId, Boolean(effectiveRepoId));
+  // Only poll /status when repo isn't already known to be READY (avoids wasted DB call on ready repos)
+  const shouldPollStatus = Boolean(effectiveRepoId) && repoQuery.data?.indexStatus !== "READY";
+  const repoStatusQuery = useIndexStatus(effectiveRepoId, shouldPollStatus);
 
   // Choose which status to use
   const statusQuery = initialUrl && !effectiveRepoId ? urlStatusQuery : repoStatusQuery;
@@ -51,7 +56,8 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
     : statusIndex ?? repositoryIndex;
   const ready = indexStatus === "READY";
 
-  const sessionsQuery = useChatSessions(effectiveRepoId, ready);
+  // Fetch chat sessions in parallel with repo detail as soon as effectiveRepoId is known (breaks serial waterfall)
+  const sessionsQuery = useChatSessions(effectiveRepoId, Boolean(effectiveRepoId));
   const createSession = useCreateChatSession(effectiveRepoId);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null

@@ -59,17 +59,29 @@ export function useStreamChat(sessionId: string | null) {
   const [lastContent, setLastContent] = useState("");
   const abortRef = useRef<AbortController | null>(null);
 
-  // For variable display time per assistant message
-  const messageStartTimeRef = useRef<number | null>(null);
-  const displayTimeRef = useRef<number | null>(null);
-  const displayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Batch high-frequency SSE tokens into at most one React state update per animation frame (60fps)
+  const pendingTokensRef = useRef("");
+  const rafIdRef = useRef<number | null>(null);
 
-  // Generate random display time between 2000ms and 6000ms
-  const generateDisplayTime = () => {
-    const MIN_DISPLAY_MS = 2000;
-    const MAX_DISPLAY_MS = 6000;
-    return Math.floor(Math.random() * (MAX_DISPLAY_MS - MIN_DISPLAY_MS + 1)) + MIN_DISPLAY_MS;
-  };
+  const flushTokens = useCallback(() => {
+    if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+    if (pendingTokensRef.current) {
+      const chunk = pendingTokensRef.current;
+      pendingTokensRef.current = "";
+      setStreamText((prev) => prev + chunk);
+    }
+  }, []);
+
+  const clearPendingTokens = useCallback(() => {
+    if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+    pendingTokensRef.current = "";
+  }, []);
 
   const send = useCallback(
     async (content: string) => {
@@ -93,19 +105,13 @@ export function useStreamChat(sessionId: string | null) {
         (prev) => [...(prev ?? []), optimistic]
       );
 
+      clearPendingTokens();
       setStreaming(true);
       setStreamText("");
       setStreamError(null);
       setLastContent(content.trim());
       let responseModel: { model: string; fallback: boolean; provider?: string } | null = null;
       let serverReportedError = false;
-      // Reset per-message timing
-      messageStartTimeRef.current = null;
-      displayTimeRef.current = null;
-      if (displayTimeoutRef.current) {
-        clearTimeout(displayTimeoutRef.current);
-        displayTimeoutRef.current = null;
-      }
 
       try {
         await streamChatMessage(sessionId, content.trim(), {
@@ -120,14 +126,20 @@ export function useStreamChat(sessionId: string | null) {
             );
           },
           onToken: (token) => {
-            // Record start time on first token
-            if (messageStartTimeRef.current === null) {
-              messageStartTimeRef.current = Date.now();
-              displayTimeRef.current = generateDisplayTime();
+            pendingTokensRef.current += token;
+            if (rafIdRef.current === null) {
+              rafIdRef.current = requestAnimationFrame(() => {
+                rafIdRef.current = null;
+                if (pendingTokensRef.current) {
+                  const chunk = pendingTokensRef.current;
+                  pendingTokensRef.current = "";
+                  setStreamText((prev) => prev + chunk);
+                }
+              });
             }
-            setStreamText((prev) => prev + token);
           },
           onAssistantMessage: (message) => {
+            clearPendingTokens();
             const enriched = responseModel ? Object.assign({}, message, { responseModel }) : message;
             queryClient.setQueryData<ChatMessage[]>(
               queryKeys.chat.messages(sessionId),
@@ -138,38 +150,15 @@ export function useStreamChat(sessionId: string | null) {
           onModel: (model, fallback, provider) => { responseModel = { model, fallback, provider }; },
           onError: (error) => {
             serverReportedError = true;
-            // Clear any pending display timeout
-            if (displayTimeoutRef.current) {
-              clearTimeout(displayTimeoutRef.current);
-              displayTimeoutRef.current = null;
-            }
+            clearPendingTokens();
             setStreaming(false);
             const structured = error as Error & { code?: string; triedModels?: string[]; retryAfter?: string };
             setStreamError({ code: structured.code, message: structured.message, triedModels: structured.triedModels, retryAfter: structured.retryAfter });
             setStreamText("");
           },
           onDone: () => {
-            // Calculate remaining delay to meet minimum display time
-            const messageStartTime = messageStartTimeRef.current;
-            const displayTime = displayTimeRef.current;
-
-            if (messageStartTime !== null && displayTime !== null) {
-              const elapsed = Date.now() - messageStartTime;
-              const remainingDelay = Math.max(0, displayTime - elapsed);
-
-              if (remainingDelay > 0) {
-                // Delay before clearing streaming flag
-                displayTimeoutRef.current = setTimeout(() => {
-                  setStreaming(false);
-                  displayTimeoutRef.current = null;
-                }, remainingDelay);
-              } else {
-                setStreaming(false);
-              }
-            } else {
-              // No timing data, clear immediately
-              setStreaming(false);
-            }
+            flushTokens();
+            setStreaming(false);
           },
         });
       } catch (err) {
@@ -179,27 +168,21 @@ export function useStreamChat(sessionId: string | null) {
           setStreamError({ message });
           toast.add({ title: "Message failed", description: message, type: "error" });
         }
+        clearPendingTokens();
         setStreamText("");
-      } finally {
-        // Only clear streaming if not already handled by onDone/onError with delay
-        // The finally block runs after try/catch but we don't want to override the setTimeout
-        // We'll let onDone/onError handle the streaming state
+        setStreaming(false);
       }
     },
-    [sessionId, streaming, queryClient, streamError]
+    [sessionId, streaming, queryClient, clearPendingTokens, flushTokens]
   );
 
   const retry = useCallback(() => { if (lastContent) void send(lastContent); }, [lastContent, send]);
 
   const stop = useCallback(() => {
     abortRef.current?.abort();
-    // Clear any pending display timeout
-    if (displayTimeoutRef.current) {
-      clearTimeout(displayTimeoutRef.current);
-      displayTimeoutRef.current = null;
-    }
+    clearPendingTokens();
     setStreaming(false);
-  }, []);
+  }, [clearPendingTokens]);
 
   return { send, stop, retry, streaming, streamText, streamError };
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { code } from "@streamdown/code";
 import { Streamdown } from "streamdown";
 
@@ -10,7 +11,7 @@ import "streamdown/styles.css";
 
 const streamdownPlugins = { code };
 
-export function ChatMarkdown({
+export const ChatMarkdown = memo(function ChatMarkdown({
   content,
   isStreaming = false,
   className,
@@ -30,4 +31,4 @@ export function ChatMarkdown({
       {content}
     </Streamdown>
   );
-}
+});

@@ -8,7 +8,7 @@ import { toast } from "@/components/ui/toast";
 
 
 
-const INDEXING_POLL_MS = 500; // Poll every 500ms for live stage updates
+const INDEXING_POLL_MS = 2000; // Matches backend 1.5s progress throttle without starving HikariCP
 
 function hasIndexingRepos(repos: Repository[] | undefined) {
   return repos?.some((repo) => repo.indexStatus === "INDEXING") ?? false;
@@ -27,26 +27,26 @@ function updateRepoInListCache(
 export function useRepos() {
   return useQuery({
     queryKey: queryKeys.repos.list(),
-    queryFn: async () => {
-      const repos = await api.listRepos(false);
-      if (repos.length === 0) {
-        return api.listRepos(true);
-      }
-      return repos;
-    },
+    queryFn: () => api.listRepos(false),
     staleTime: 30_000,
     refetchInterval: (query) =>
       hasIndexingRepos(query.state.data) ? INDEXING_POLL_MS : false,
   });
 }
 
-export function useRepository(repoId: string, options?: { enabled?: boolean }) {
+export function useRepository(
+  repoId: string,
+  options?: { enabled?: boolean; pollWhileIndexing?: boolean }
+) {
+  const pollWhileIndexing = options?.pollWhileIndexing ?? true;
   return useQuery({
     queryKey: queryKeys.repos.detail(repoId),
     queryFn: () => api.getRepo(repoId),
     enabled: Boolean(repoId) && (options?.enabled ?? true),
     refetchInterval: (query) =>
-      query.state.data?.indexStatus === "INDEXING" ? INDEXING_POLL_MS : false,
+      pollWhileIndexing && query.state.data?.indexStatus === "INDEXING"
+        ? INDEXING_POLL_MS
+        : false,
   });
 }
 

@@ -1,31 +1,22 @@
 package devPilot.backend.config;
 
 import java.util.concurrent.Executor;
-import java.util.List;
-import java.util.ArrayList;
-import java.util.stream.Collectors;
 
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.scheduling.annotation.EnableAsync;
-import org.springframework.core.retry.RetryPolicy;
-import org.springframework.core.retry.RetryTemplate;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.google.genai.GoogleGenAiChatModel;
 import org.springframework.ai.google.genai.GoogleGenAiChatOptions;
 import org.springframework.ai.model.tool.ToolCallingManager;
-import org.springframework.ai.embedding.EmbeddingModel;
-import org.springframework.ai.vectorstore.VectorStore;
-import org.springframework.ai.vectorstore.pgvector.PgVectorStore;
-import org.springframework.ai.vectorstore.pgvector.PgVectorStore.PgIndexType;
-import org.springframework.ai.vectorstore.pgvector.PgVectorStore.PgDistanceType;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.retry.RetryPolicy;
+import org.springframework.core.retry.RetryTemplate;
+import org.springframework.core.task.AsyncTaskExecutor;
+import org.springframework.core.task.SimpleAsyncTaskExecutor;
+import org.springframework.scheduling.annotation.EnableAsync;
+
 import com.google.genai.Client;
 import io.micrometer.observation.ObservationRegistry;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
-import org.springframework.beans.factory.annotation.Value;
-import java.time.Duration;
 
 @Configuration
 @EnableAsync
@@ -61,34 +52,37 @@ public class AppConfig {
 
     @Bean(name = "indexingExecutor")
     Executor indexingExecutor() {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(2);
-        executor.setMaxPoolSize(4);
-        executor.setQueueCapacity(50);
-        executor.setThreadNamePrefix("index-");
-        executor.initialize();
+        SimpleAsyncTaskExecutor executor = new SimpleAsyncTaskExecutor("index-");
+        executor.setVirtualThreads(true);
+        executor.setConcurrencyLimit(4);
+        return executor;
+    }
+
+    /**
+     * Dedicated virtual-thread I/O executor for concurrent GitHub fetching, Cloudflare embedding batches,
+     * and async DB writes so tasks never serialize onto ForkJoinPool.commonPool() on 1-2 vCPU containers.
+     */
+    @Bean(name = "ioExecutor")
+    AsyncTaskExecutor ioExecutor() {
+        SimpleAsyncTaskExecutor executor = new SimpleAsyncTaskExecutor("io-");
+        executor.setVirtualThreads(true);
+        executor.setConcurrencyLimit(32);
         return executor;
     }
 
     @Bean(name = "chatExecutor")
-    ThreadPoolTaskExecutor chatExecutor() {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(2);
-        executor.setMaxPoolSize(4);
-        executor.setQueueCapacity(50);
-        executor.setThreadNamePrefix("chat-");
-        executor.initialize();
+    AsyncTaskExecutor chatExecutor() {
+        SimpleAsyncTaskExecutor executor = new SimpleAsyncTaskExecutor("chat-");
+        executor.setVirtualThreads(true);
+        executor.setConcurrencyLimit(32);
         return executor;
     }
 
     @Bean(name = "ragExecutor")
-    ThreadPoolTaskExecutor ragExecutor() {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(2);
-        executor.setMaxPoolSize(2);
-        executor.setQueueCapacity(8);
-        executor.setThreadNamePrefix("rag-");
-        executor.initialize();
+    AsyncTaskExecutor ragExecutor() {
+        SimpleAsyncTaskExecutor executor = new SimpleAsyncTaskExecutor("rag-");
+        executor.setVirtualThreads(true);
+        executor.setConcurrencyLimit(16);
         return executor;
     }
 }

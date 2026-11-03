@@ -79,7 +79,16 @@ export function getWorkspaceId(): string {
 }
 
 export function getApiBaseUrl() {
-  return "https://devpilot-backend-iso1.onrender.com"
+  // Same-origin Next.js rewrite (/backend -> backendOrigin) eliminates cross-origin CORS OPTIONS preflights
+  return "/backend";
+}
+
+export function getStreamBaseUrl() {
+  // Direct backend origin for SSE streaming so reverse proxies never buffer or cut off live token streams
+  return (
+    process.env.NEXT_PUBLIC_API_BASE_URL ||
+    "https://devpilot-backend-iso1.onrender.com"
+  ).replace(/\/$/, "");
 }
 
 async function parseError(res: Response): Promise<string> {

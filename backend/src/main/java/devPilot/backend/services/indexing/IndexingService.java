@@ -2,34 +2,48 @@ package devPilot.backend.services.indexing;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
-import java.security.MessageDigest;
-import java.nio.charset.StandardCharsets;
 
-import org.springframework.stereotype.Service;
 import org.springframework.ai.document.Document;
-import org.springframework.ai.vectorstore.SearchRequest;
+import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.ai.vectorstore.filter.Filter;
+import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
+import org.springframework.stereotype.Service;
 
 import devPilot.backend.entity.IndexStatus;
 import devPilot.backend.entity.Repository;
 import devPilot.backend.exceptions.NotFoundException;
 import devPilot.backend.repository.RepositoryRepository;
 import devPilot.backend.services.ai.RagSettings;
+import devPilot.backend.services.embedding.CloudflareEmbeddingService;
 import devPilot.backend.services.github.GitHubRateLimiter;
 import devPilot.backend.services.github.GithubApiClient;
 import jakarta.transaction.Transactional;
@@ -40,13 +54,20 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 @Slf4j
 public class IndexingService {
-    private static final int VECTOR_BATCH_SIZE = 16;
+    private static final int VECTOR_BATCH_SIZE = 64;
+    private static final int PARALLEL_EMBED_BATCHES = 3; // Bounded concurrency over virtual threads: protects Hikari (max=8) & 160MB heap
+    private static final int ZIPBALL_FILE_THRESHOLD = 5; // Use 1-request zipball when fetching >= 5 files
+    private static final int DELETE_PATH_BATCH_SIZE = 50;
     private static final int PARALLEL_FETCH_WORKERS = 8;
-    private static final long RETRIEVAL_TIMEOUT_MS = 120000; // 2 minutes total timeout
+    private static final long RETRIEVAL_TIMEOUT_MS = 120000;
+    private static final long STATUS_UPDATE_THROTTLE_MS = 1500;
 
-    private static final int MAX_RETRIES = 3;
-    private static final long BASE_RETRY_DELAY_MS = 2000;
+    private static final int MAX_DB_RETRIES = 1;
+    private static final long BASE_RETRY_DELAY_MS = 1000;
     private static final long INDEX_LOCK_TIMEOUT_MS = TimeUnit.MINUTES.toMillis(15);
+
+    private static final Executor FALLBACK_IO_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final ConcurrentHashMap<UUID, IndexingLock> indexingSet = new ConcurrentHashMap<>();
 
@@ -56,15 +77,23 @@ public class IndexingService {
     private final CodeChunker codeChunker;
     private final GitHubRateLimiter rateLimiter;
     private final VectorStore vectorStore;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final EmbeddingModel embeddingModel;
+
+    @Autowired(required = false)
+    @Qualifier("ioExecutor")
+    private Executor ioExecutor;
 
     @Value("${app.indexing.max-file-bytes:102400}")
     private long maxFileBytes;
 
-    private boolean embeddingFailed = false;
+    private Executor effectiveIoExecutor() {
+        return ioExecutor != null ? ioExecutor : FALLBACK_IO_EXECUTOR;
+    }
 
     private static final class IndexingLock {
         private volatile long lastProgressAt = System.currentTimeMillis();
+        private final AtomicLong lastDbStatusWriteAt = new AtomicLong(0L);
+        private final AtomicReference<String> lastStage = new AtomicReference<>("");
     }
 
     private IndexingLock activeLock(UUID repoId) {
@@ -95,21 +124,31 @@ public class IndexingService {
         return activeLock(repoId) != null;
     }
 
-    // Helper to update repo indexing status with stage and detail
-    private void updateIndexingStatus(UUID repoId, String stage, String detail, int filesDone, int filesTotal, int chunksDone, int chunksTotal) {
+    /**
+     * Throttled DB progress updater: always updates in-memory lock timestamp,
+     * writes to Postgres only on stage transitions or at most once every 1.5s.
+     */
+    private void updateIndexingStatus(UUID repoId, String stage, String detail, int filesDone, int filesTotal, int chunksDone, int chunksTotal, boolean forceWrite) {
+        long now = System.currentTimeMillis();
+        IndexingLock lock = indexingSet.get(repoId);
+        if (lock != null) {
+            lock.lastProgressAt = now;
+            boolean stageChanged = stage != null && !stage.equals(lock.lastStage.get());
+            long lastWrite = lock.lastDbStatusWriteAt.get();
+            if (!forceWrite && !stageChanged && (now - lastWrite) < STATUS_UPDATE_THROTTLE_MS) {
+                return;
+            }
+            if (!forceWrite && !stageChanged && !lock.lastDbStatusWriteAt.compareAndSet(lastWrite, now)) {
+                return;
+            }
+            lock.lastDbStatusWriteAt.set(now);
+            if (stage != null) {
+                lock.lastStage.set(stage);
+            }
+        }
         try {
-            IndexingLock lock = indexingSet.get(repoId);
-            if (lock != null) lock.lastProgressAt = System.currentTimeMillis();
-            repositoryRepository.findById(repoId).ifPresent(repo -> {
-                repo.setIndexingStage(stage);
-                repo.setIndexingDetail(detail);
-                if (filesDone >= 0) repo.setFilesProcessed(filesDone);
-                if (filesTotal >= 0) repo.setFilesTotal(filesTotal);
-                if (chunksDone >= 0) repo.setChunksProcessed(chunksDone);
-                if (chunksTotal >= 0) repo.setChunksTotal(chunksTotal);
-                repo.setUpdatedAt(Instant.now());
-                repositoryRepository.save(repo);
-            });
+            repositoryRepository.updateIndexingProgress(
+                    repoId, stage, detail, filesDone, filesTotal, chunksDone, chunksTotal, Instant.now());
         } catch (Exception e) {
             log.warn("Failed to update indexing status: {}", e.getMessage());
         }
@@ -142,7 +181,12 @@ public class IndexingService {
     }
 
     @Async("indexingExecutor")
-     public void indexAsync(UUID repoId, UUID userId) {
+    public void indexAsync(UUID repoId, UUID userId) {
+        indexAsync(repoId, userId, false);
+    }
+
+    @Async("indexingExecutor")
+    public void indexAsync(UUID repoId, UUID userId, boolean force) {
         IndexingLock newLock = new IndexingLock();
         IndexingLock existingLock = activeLock(repoId);
         if (existingLock != null) {
@@ -166,7 +210,7 @@ public class IndexingService {
         scheduleStaleLockCheck(repoId, newLock);
         long startTime = System.currentTimeMillis();
         try {
-            doIndex(repoId, userId, startTime);
+            doIndex(repoId, userId, startTime, force);
         } catch (Exception ex) {
             log.error("Indexing failed for repo {}", repoId, ex);
             markFailed(repoId, ex.getMessage());
@@ -175,25 +219,30 @@ public class IndexingService {
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private void doIndex(UUID repoId, UUID userId, long startTime) {
-        log.info("{} [INDEX] start repoId={}", Instant.now(), repoId);
+    private void doIndex(UUID repoId, UUID userId, long startTime, boolean force) {
+        AtomicBoolean embeddingFailed = new AtomicBoolean(false);
+        long cfCallsBefore = embeddingModel instanceof CloudflareEmbeddingService cf ? cf.getApiCallCount() : 0L;
+
+        log.info("{} [INDEX] start repoId={} force={}", Instant.now(), repoId, force);
         Repository repo = repositoryRepository.findById(repoId)
                 .orElseThrow(() -> new NotFoundException("Repository not found"));
 
-        // Load previously indexed files
-        Map<String, String> previousFiles = loadIndexedFiles(repo);
-        String previousTreeSha = repo.getTreeSha() != null ? repo.getTreeSha() : "";
+        Map<String, String> previousFiles = force ? new HashMap<>() : loadIndexedFiles(repo);
+        String previousTreeSha = (!force && repo.getTreeSha() != null) ? repo.getTreeSha() : "";
 
-        // Get current tree and compute current SHA
+        // Fetch tree and filter eligible files BEFORE downloading any file content
         Map<String, Object> tree = gitHubApiClient.getRepoTree(
             repo.getOwner(), repo.getName(), repo.getDefaultBranch());
 
-        String currentTreeSha = computeTreeSha(tree);
-        Map<String, String> currentFiles = extractFileShas(tree);
+        FilteredTree filteredTree = extractFileShasWithStats(tree);
+        Map<String, String> currentFiles = filteredTree.eligibleFiles;
+        String currentTreeSha = computeTreeSha(currentFiles);
 
-        // If tree SHA hasn't changed, skip indexing
-        if (!previousTreeSha.isEmpty() && previousTreeSha.equals(currentTreeSha)) {
+        log.info("{} [INDEX] filter repoId={} totalBlobs={} eligible={} skippedByFilter={} maxFileBytes={}",
+                Instant.now(), repoId, filteredTree.totalBlobs, currentFiles.size(),
+                filteredTree.skippedCount, maxFileBytes);
+
+        if (!force && !previousTreeSha.isEmpty() && previousTreeSha.equals(currentTreeSha)) {
             int skippedCount = previousFiles.size();
             long duration = System.currentTimeMillis() - startTime;
             log.info("{} [INDEX] skipped repoId={} files={} time={}ms - tree unchanged",
@@ -201,64 +250,62 @@ public class IndexingService {
             repo.setFilesProcessed(skippedCount);
             repo.setFilesTotal(skippedCount);
             repo.setIndexStatus(IndexStatus.READY);
+            repo.setIndexingStage("done");
+            repo.setIndexingDetail("Indexing complete");
             repo.setUpdatedAt(Instant.now());
             repositoryRepository.save(repo);
             return;
         }
 
-        // Determine changed, new, and removed files
+        if (force) {
+            deleteAllVectorsForRepo(userId, repoId.toString());
+        }
+
         IndexingResult result = computeIndexingChanges(previousFiles, currentFiles);
 
-        log.info("{} [INDEX] changes repoId={} total={} new={} changed={} removed={} unchanged={}",
+        log.info("{} [INDEX] changes repoId={} total={} new={} changed={} removed={} unchanged={} filteredOut={}",
             Instant.now(), repoId,
             result.allFiles.size(),
             result.newFiles.size(),
             result.changedFiles.size(),
             result.removedFiles.size(),
-            result.unchangedFiles.size());
+            result.unchangedFiles.size(),
+            filteredTree.skippedCount);
 
-        // Update status: fetching stage
-        updateIndexingStatus(repoId, "fetching", "Fetching file list...", 0, result.allFiles.size(), 0, 0);
+        updateIndexingStatus(repoId, "fetching", "Fetching repository files...", 0, result.allFiles.size(), 0, 0, true);
 
-        // Delete vectors for removed files only
-        deleteVectorsForRemovedFiles(userId, repoId.toString(), result.removedFiles);
+        // Delete vectors ONLY for removed and changed files (filtered by repoId + userId + filePath)
+        List<String> pathsToDelete = new ArrayList<>(result.removedFiles);
+        pathsToDelete.addAll(result.changedFiles);
+        deleteVectorsForRemovedFiles(userId, repoId.toString(), pathsToDelete);
 
-        // Fetch and process changed/new files in parallel
-        long fetchStart = System.currentTimeMillis();
-        List<Document> allChunks = fetchAndProcessFiles(
-            repo, userId, repoId, result.newFiles, result.changedFiles, result.allFiles.size());
-        long fetchDuration = System.currentTimeMillis() - fetchStart;
+        // Stream-fetch, chunk, and flush 64-chunk batches with bounded parallelism (2 workers)
+        // Never holds whole-repo chunks in heap (safe for -Xmx160m)
+        long pipelineStart = System.currentTimeMillis();
+        StreamingStats stats = streamIndexFiles(
+                repo, userId, repoId, result.newFiles, result.changedFiles, result.allFiles.size(), embeddingFailed);
+        long pipelineDuration = System.currentTimeMillis() - pipelineStart;
 
-        int totalChunks = allChunks.size();
-
-        // Update status: chunking stage
-        updateIndexingStatus(repoId, "chunking", "Splitting files into chunks...",
-            result.allFiles.size(), result.allFiles.size(), totalChunks, totalChunks);
-
-        // Store all chunks
-        storeChunks(allChunks, repoId, repoId);
-
-        // If embedding failed, mark the repository as failed instead of ready
-        if (embeddingFailed) {
+        if (embeddingFailed.get()) {
             markFailed(repoId, "Embedding batch failed - check logs for details");
             log.warn("{} [INDEX] aborted due to embedding failure repoId={}", Instant.now(), repoId);
             return;
         }
 
-        int skippedCount = result.unchangedFiles.size();
+        updateIndexingStatus(repoId, "saving", "Finalizing repository index...",
+                result.allFiles.size(), result.allFiles.size(), stats.totalChunks, stats.totalChunks, true);
 
-        // Update repo with new tree SHA and indexed files
         repo.setTreeSha(currentTreeSha);
         try {
-            repo.setIndexedFilesJson(objectMapper.writeValueAsString(currentFiles));
+            repo.setIndexedFilesJson(OBJECT_MAPPER.writeValueAsString(currentFiles));
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
             log.error("Failed to serialize indexed files JSON: {}", e.getMessage());
         }
         repo.setFilesTotal(result.allFiles.size());
         repo.setFilesProcessed(result.allFiles.size());
-        repo.setChunkCount(totalChunks);
-        repo.setChunksTotal(totalChunks);
-        repo.setChunksProcessed(totalChunks);
+        repo.setChunkCount(stats.totalChunks);
+        repo.setChunksTotal(stats.totalChunks);
+        repo.setChunksProcessed(stats.totalChunks);
         repo.setIndexedAt(Instant.now());
         repo.setIndexStatus(IndexStatus.READY);
         repo.setIndexingStage("done");
@@ -270,7 +317,6 @@ public class IndexingService {
             log.info("{} [INDEX] marked READY repoId={}", Instant.now(), repoId);
         } catch (Exception e) {
             log.error("{} [INDEX] FAILED to persist READY status repoId={}: {}", Instant.now(), repoId, e.getMessage(), e);
-            // Mark as failed so frontend knows
             repo.setIndexStatus(IndexStatus.FAILED);
             repo.setErrorMessage("Failed to persist indexing completion: " + e.getMessage());
             repo.setIndexingStage("failed");
@@ -280,9 +326,221 @@ public class IndexingService {
         }
 
         long duration = System.currentTimeMillis() - startTime;
-        log.info("{} [INDEX] complete repoId={} total={} fetched={} skipped={} chunks={} fetch={}ms time={}ms",
-                 Instant.now(), repoId, result.allFiles.size(), result.newFiles.size() + result.changedFiles.size(),
-                 skippedCount, totalChunks, fetchDuration, duration);
+        long cfCallsUsed = embeddingModel instanceof CloudflareEmbeddingService cf
+                ? cf.getApiCallCount() - cfCallsBefore : 0L;
+        double cacheHitRate = embeddingModel instanceof CloudflareEmbeddingService cf
+                ? cf.getCacheHitRate() : 0.0;
+        log.info("{} [INDEX] complete repoId={} mode={} totalBlobs={} eligible={} filteredOut={} fetched={} unchanged={} chunks={} cfCalls={} cacheHitRate={}% pipelineMs={} time={}ms",
+                 Instant.now(), repoId, stats.mode, filteredTree.totalBlobs, result.allFiles.size(),
+                 filteredTree.skippedCount, stats.filesProcessed, result.unchangedFiles.size(),
+                 stats.totalChunks, cfCallsUsed, String.format(Locale.ROOT, "%.1f", cacheHitRate),
+                 pipelineDuration, duration);
+    }
+
+    /**
+     * Streams files (via single-request zipball for bulk indexing or per-file API for tiny diffs),
+     * chunks each file, and flushes 64-chunk batches concurrently (max 2 in flight) so peak heap stays tiny.
+     */
+    private StreamingStats streamIndexFiles(
+            Repository repo,
+            UUID userId,
+            UUID repoId,
+            List<String> newFiles,
+            List<String> changedFiles,
+            int totalFiles,
+            AtomicBoolean embeddingFailed) {
+
+        List<String> filesToFetch = new ArrayList<>(newFiles);
+        filesToFetch.addAll(changedFiles);
+        if (filesToFetch.isEmpty()) {
+            return new StreamingStats("noop", 0, 0);
+        }
+
+        StreamingBatchFlusher flusher = new StreamingBatchFlusher(repoId, totalFiles, embeddingFailed);
+        Set<String> targetPaths = new HashSet<>(filesToFetch);
+        AtomicInteger filesDone = new AtomicInteger(0);
+        String mode = "zipball";
+
+        boolean zipballSucceeded = false;
+        if (filesToFetch.size() >= ZIPBALL_FILE_THRESHOLD) {
+            try {
+                log.info("{} [INDEX] streaming zipball (1 GitHub call) repoId={} targetFiles={}",
+                        Instant.now(), repoId, filesToFetch.size());
+                gitHubApiClient.streamRepoZipball(
+                        repo.getOwner(),
+                        repo.getName(),
+                        repo.getDefaultBranch(),
+                        maxFileBytes,
+                        (path, size) -> targetPaths.contains(path) && fileFilter.isEligible(path, size, maxFileBytes),
+                        (path, content) -> {
+                            List<Document> chunks = codeChunker.chunkFile(userId, repoId.toString(), path, content);
+                            int done = filesDone.incrementAndGet();
+                            flusher.addChunks(chunks, done);
+                        });
+                zipballSucceeded = true;
+            } catch (Exception e) {
+                log.warn("{} [INDEX] zipball stream failed for repoId={}, falling back to per-file API: {}",
+                        Instant.now(), repoId, e.getMessage());
+            }
+        }
+
+        if (!zipballSucceeded) {
+            mode = "contents-api";
+            List<CompletableFuture<Void>> fetchFutures = new ArrayList<>(filesToFetch.size());
+            Semaphore fetchSemaphore = new Semaphore(PARALLEL_FETCH_WORKERS);
+
+            Executor executor = effectiveIoExecutor();
+            for (String path : filesToFetch) {
+                fetchFutures.add(CompletableFuture.runAsync(() -> {
+                    try {
+                        fetchSemaphore.acquire();
+                        rateLimiter.pause();
+                        String content = gitHubApiClient.getFileContent(repo.getOwner(), repo.getName(), path);
+                        int done = filesDone.incrementAndGet();
+                        if (content != null) {
+                            List<Document> chunks = codeChunker.chunkFile(userId, repoId.toString(), path, content);
+                            flusher.addChunks(chunks, done);
+                        } else {
+                            updateIndexingStatus(repoId, "fetching", "Fetching files...",
+                                    done, totalFiles, flusher.getChunksEmbedded(), flusher.getTotalChunks(), false);
+                        }
+                    } catch (Exception e) {
+                        log.warn("Failed to process file {}: {}", path, e.getMessage());
+                    } finally {
+                        fetchSemaphore.release();
+                    }
+                }, executor));
+            }
+
+            for (CompletableFuture<Void> future : fetchFutures) {
+                try {
+                    future.get(RETRIEVAL_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                } catch (TimeoutException e) {
+                    log.warn("Timeout processing file batch, continuing with remaining results");
+                } catch (Exception e) {
+                    log.warn("Error processing file: {}", e.getMessage());
+                }
+            }
+        }
+
+        flusher.flushRemainingAndAwait();
+        return new StreamingStats(mode, filesDone.get(), flusher.getTotalChunks());
+    }
+
+    /**
+     * Thread-safe streaming accumulator that flushes 64-chunk batches to Cloudflare + PgVector
+     * with bounded concurrency (PARALLEL_EMBED_BATCHES = 2), keeping memory bounded even on large repos.
+     */
+    private final class StreamingBatchFlusher {
+        private final UUID repoId;
+        private final int totalFiles;
+        private final AtomicBoolean embeddingFailed;
+        private final Semaphore embedSemaphore = new Semaphore(PARALLEL_EMBED_BATCHES);
+        private final List<Document> buffer = new ArrayList<>(VECTOR_BATCH_SIZE);
+        private final List<CompletableFuture<Void>> inFlight = new ArrayList<>();
+        private final AtomicInteger totalChunks = new AtomicInteger(0);
+        private final AtomicInteger chunksEmbedded = new AtomicInteger(0);
+        private final AtomicInteger lastFilesDone = new AtomicInteger(0);
+
+        StreamingBatchFlusher(UUID repoId, int totalFiles, AtomicBoolean embeddingFailed) {
+            this.repoId = repoId;
+            this.totalFiles = totalFiles;
+            this.embeddingFailed = embeddingFailed;
+        }
+
+        void addChunks(List<Document> chunks, int filesDone) {
+            lastFilesDone.set(filesDone);
+            if (chunks == null || chunks.isEmpty()) {
+                return;
+            }
+            List<List<Document>> readyBatches = new ArrayList<>();
+            int batchStartBase;
+            synchronized (buffer) {
+                batchStartBase = totalChunks.get();
+                totalChunks.addAndGet(chunks.size());
+                for (Document doc : chunks) {
+                    buffer.add(doc);
+                    if (buffer.size() >= VECTOR_BATCH_SIZE) {
+                        readyBatches.add(new ArrayList<>(buffer));
+                        buffer.clear();
+                    }
+                }
+            }
+            updateIndexingStatus(repoId, "embedding",
+                    "Streaming & embedding (" + filesDone + "/" + totalFiles + " files)...",
+                    filesDone, totalFiles, chunksEmbedded.get(), totalChunks.get(), false);
+
+            int offset = batchStartBase;
+            for (List<Document> batch : readyBatches) {
+                submitBatch(batch, offset, offset + batch.size());
+                offset += batch.size();
+            }
+        }
+
+        void flushRemainingAndAwait() {
+            List<Document> remainder = null;
+            int endIdx;
+            synchronized (buffer) {
+                if (!buffer.isEmpty()) {
+                    remainder = new ArrayList<>(buffer);
+                    buffer.clear();
+                }
+                endIdx = totalChunks.get();
+            }
+            if (remainder != null) {
+                submitBatch(remainder, Math.max(0, endIdx - remainder.size()), endIdx);
+            }
+            List<CompletableFuture<Void>> futuresCopy;
+            synchronized (inFlight) {
+                futuresCopy = new ArrayList<>(inFlight);
+            }
+            for (CompletableFuture<Void> f : futuresCopy) {
+                try {
+                    f.join();
+                } catch (Exception e) {
+                    log.error("Embedding batch future failed for repo {}: {}", repoId, e.getMessage(), e);
+                    embeddingFailed.set(true);
+                }
+            }
+        }
+
+        private void submitBatch(List<Document> batch, int start, int end) {
+            try {
+                // Backpressure: at most PARALLEL_EMBED_BATCHES in flight at once on dedicated virtual threads
+                embedSemaphore.acquire();
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                embeddingFailed.set(true);
+                return;
+            }
+            CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                try {
+                    boolean success = addBatchWithRetry(batch, repoId, start, end);
+                    if (!success) {
+                        log.error("Failed to store batch {}-{} for repo {} - embeddingFailed flag set", start, end, repoId);
+                        embeddingFailed.set(true);
+                    } else {
+                        int done = chunksEmbedded.addAndGet(batch.size());
+                        updateIndexingStatus(repoId, "embedding",
+                                "Embedded " + done + "/" + totalChunks.get() + " chunks...",
+                                lastFilesDone.get(), totalFiles, done, totalChunks.get(), false);
+                    }
+                } finally {
+                    embedSemaphore.release();
+                }
+            }, effectiveIoExecutor());
+            synchronized (inFlight) {
+                inFlight.add(future);
+            }
+        }
+
+        int getTotalChunks() {
+            return totalChunks.get();
+        }
+
+        int getChunksEmbedded() {
+            return chunksEmbedded.get();
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -291,30 +549,57 @@ public class IndexingService {
             return new HashMap<>();
         }
         try {
-            return objectMapper.readValue(repo.getIndexedFilesJson(), new TypeReference<Map<String, String>>() {});
+            return OBJECT_MAPPER.readValue(repo.getIndexedFilesJson(), new TypeReference<Map<String, String>>() {});
         } catch (Exception e) {
             log.warn("Could not parse indexed files JSON, starting fresh: {}", e.getMessage());
             return new HashMap<>();
         }
     }
 
+    Map<String, String> extractFileShas(Map<String, Object> tree) {
+        return extractFileShasWithStats(tree).eligibleFiles;
+    }
+
     @SuppressWarnings("unchecked")
-    private Map<String, String> extractFileShas(Map<String, Object> tree) {
+    private FilteredTree extractFileShasWithStats(Map<String, Object> tree) {
         Map<String, String> result = new HashMap<>();
-        if (tree == null || tree.get("tree") == null) return result;
+        int totalBlobs = 0;
+        int skippedCount = 0;
+        if (tree == null || tree.get("tree") == null) {
+            return new FilteredTree(result, 0, 0);
+        }
 
         List<Map<String, Object>> entries = (List<Map<String, Object>>) tree.get("tree");
         for (Map<String, Object> entry : entries) {
             if (!"blob".equals(entry.get("type"))) continue;
+            totalBlobs++;
             String path = String.valueOf(entry.get("path"));
+            long sizeBytes = parseBlobSize(entry.get("size"));
+            if (!fileFilter.isEligible(path, sizeBytes, maxFileBytes)) {
+                skippedCount++;
+                continue;
+            }
             String sha = String.valueOf(entry.get("sha"));
             result.put(path, sha);
         }
-        return result;
+        return new FilteredTree(result, totalBlobs, skippedCount);
     }
 
-    private String computeTreeSha(Map<String, Object> tree) {
-        Map<String, String> files = extractFileShas(tree);
+    private static long parseBlobSize(Object sizeObj) {
+        if (sizeObj instanceof Number number) {
+            return number.longValue();
+        }
+        if (sizeObj == null) {
+            return 0L;
+        }
+        try {
+            return Long.parseLong(String.valueOf(sizeObj));
+        } catch (NumberFormatException ignored) {
+            return 0L;
+        }
+    }
+
+    private String computeTreeSha(Map<String, String> files) {
         String filesHash = files.entrySet().stream()
             .map(e -> e.getKey() + ":" + e.getValue())
             .sorted()
@@ -332,7 +617,6 @@ public class IndexingService {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private IndexingResult computeIndexingChanges(Map<String, String> previousFiles, Map<String, String> currentFiles) {
         List<String> allFiles = new ArrayList<>(currentFiles.keySet());
         List<String> newFiles = new ArrayList<>();
@@ -361,188 +645,88 @@ public class IndexingService {
         return new IndexingResult(allFiles, newFiles, changedFiles, removedFiles, unchangedFiles, currentFiles);
     }
 
-    @SuppressWarnings("unchecked")
-    private List<Document> fetchAndProcessFiles(
-            Repository repo, UUID userId, UUID repoId,
-            List<String> newFiles, List<String> changedFiles, int totalFiles) {
-
-        embeddingFailed = false;  // Reset flag for each indexing run
-
-        List<String> filesToFetch = new ArrayList<>(newFiles);
-        filesToFetch.addAll(changedFiles);
-
-        if (filesToFetch.isEmpty()) {
-            return new ArrayList<>();
+    private void deleteAllVectorsForRepo(UUID userId, String repoId) {
+        try {
+            FilterExpressionBuilder b = new FilterExpressionBuilder();
+            Filter.Expression filter = b.and(
+                    b.eq(RagSettings.METADATA_REPO_ID, repoId),
+                    b.eq(RagSettings.METADATA_USER_ID, userId.toString())
+            ).build();
+            vectorStore.delete(filter);
+            log.info("{} [INDEX] cleared existing vectors for force re-index repoId={}", Instant.now(), repoId);
+        } catch (Exception ex) {
+            log.error("Could not clear existing vectors for repo {}", repoId, ex);
         }
-
-        List<CompletableFuture<FileResult>> futures = new ArrayList<>();
-        Semaphore semaphore = new Semaphore(PARALLEL_FETCH_WORKERS);
-
-        for (String path : filesToFetch) {
-            futures.add(CompletableFuture.supplyAsync(() -> {
-                try {
-                    semaphore.acquire();
-                    rateLimiter.pause();
-
-                    // Update detail for current file being fetched
-                    updateIndexingStatus(repoId, "fetching", "Fetching " + path + "...",
-                        filesToFetch.indexOf(path), totalFiles, 0, 0);
-
-                    String content = gitHubApiClient.getFileContent(
-                        repo.getOwner(), repo.getName(), path);
-                    if (content == null) {
-                        return new FileResult(path, List.of(), null);
-                    }
-
-                    List<Document> chunks = codeChunker.chunkFile(
-                        userId, repoId.toString(), path, content);
-                    return new FileResult(path, chunks, null);
-
-                } catch (Exception e) {
-                    log.warn("Failed to process file {}: {}", path, e.getMessage());
-                    return new FileResult(path, List.of(), e);
-                } finally {
-                    semaphore.release();
-                }
-            }));
-        }
-
-        // Wait for all to complete with overall timeout
-        List<Document> allChunks = new ArrayList<>();
-        int filesCompleted = 0;
-        for (CompletableFuture<FileResult> future : futures) {
-            try {
-                FileResult result = future.get(RETRIEVAL_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-                filesCompleted++;
-                if (result.chunks != null) {
-                    allChunks.addAll(result.chunks);
-                }
-                // Update progress
-                updateIndexingStatus(repoId, "fetching", "Fetching complete",
-                    filesCompleted, totalFiles, allChunks.size(), 0);
-            } catch (TimeoutException e) {
-                log.warn("Timeout processing files, continuing with partial results");
-            } catch (Exception e) {
-                log.warn("Error processing files: {}", e.getMessage());
-            }
-        }
-
-        return allChunks;
     }
 
     private void deleteVectorsForRemovedFiles(UUID userId, String repoId, List<String> removedFiles) {
-        if (removedFiles.isEmpty()) return;
+        if (removedFiles == null || removedFiles.isEmpty()) return;
 
         try {
-            // Build filter expression as string - matches how PGVector stores metadata
-            String filterExpression = String.format(
-                "%s == '%s' && %s == '%s'",
-                RagSettings.METADATA_REPO_ID, repoId,
-                RagSettings.METADATA_USER_ID, userId.toString()
-            );
+            FilterExpressionBuilder b = new FilterExpressionBuilder();
+            for (int i = 0; i < removedFiles.size(); i += DELETE_PATH_BATCH_SIZE) {
+                int end = Math.min(i + DELETE_PATH_BATCH_SIZE, removedFiles.size());
+                List<String> pathBatch = removedFiles.subList(i, end);
 
-            // Use SearchRequest to find matching documents, then delete by ID
-            SearchRequest searchRequest = SearchRequest.builder()
-                .query("")  // empty query, we're just filtering
-                .topK(Integer.MAX_VALUE)
-                .filterExpression(filterExpression)
-                .build();
+                Filter.Expression pathExpr = pathBatch.size() == 1
+                        ? b.eq("filePath", pathBatch.get(0)).build()
+                        : b.in("filePath", pathBatch.toArray()).build();
 
-            List<Document> docsToDelete = vectorStore.similaritySearch(searchRequest);
-            List<String> idsToDelete = docsToDelete.stream()
-                .map(Document::getId)
-                .toList();
+                Filter.Expression filter = b.and(
+                        b.and(
+                                b.eq(RagSettings.METADATA_REPO_ID, repoId),
+                                b.eq(RagSettings.METADATA_USER_ID, userId.toString())
+                        ),
+                        new FilterExpressionBuilder.Op(pathExpr)
+                ).build();
 
-            if (!idsToDelete.isEmpty()) {
-                log.info("{} [INDEX] deleting {} vectors repoId={} removed={}",
-                    Instant.now(), idsToDelete.size(), repoId, removedFiles.size());
-                vectorStore.delete(idsToDelete);
+                vectorStore.delete(filter);
             }
-            log.info("{} [INDEX] deleted vectors for repoId={}", Instant.now(), repoId);
+            log.info("{} [INDEX] deleted vectors for {} file(s) repoId={}",
+                    Instant.now(), removedFiles.size(), repoId);
         } catch (Exception ex) {
-            log.error("Could not delete existing vectors for repo {}", repoId, ex);
+            log.error("Could not delete existing vectors for removed files in repo {}", repoId, ex);
         }
-    }
-
-    private void storeChunks(List<Document> chunks, UUID repoId, UUID repoIdForStatus) {
-        int batchSize = VECTOR_BATCH_SIZE;
-        int totalChunks = chunks.size();
-
-        for (int i = 0; i < chunks.size(); i += batchSize) {
-            int start = i;
-            int end = Math.min(i + batchSize, chunks.size());
-            List<Document> batch = chunks.subList(i, end);
-
-            // Update embedding progress
-            updateIndexingStatus(repoIdForStatus, "embedding",
-                "Embedding batch " + start + "-" + end + " of " + totalChunks + "...",
-                -1, -1, start, totalChunks);
-
-            boolean success = addBatchWithRetry(batch, repoId, start, end);
-            if (!success) {
-                log.error("Failed to store batch {}-{} for repo {} - embeddingFailed flag set", start, end, repoId);
-                embeddingFailed = true;
-            } else {
-                // Update chunks processed
-                updateIndexingStatus(repoIdForStatus, "embedding",
-                    "Embedded batch " + start + "-" + end + " of " + totalChunks,
-                    -1, -1, end, totalChunks);
-            }
-        }
-
-        // Update status: saving stage
-        updateIndexingStatus(repoIdForStatus, "saving", "Saving vectors to database...",
-            -1, -1, totalChunks, totalChunks);
     }
 
     private boolean addBatchWithRetry(List<Document> batch, UUID repoId, int start, int end) {
-        log.info("{} [INDEX] vector batch start repoId={} chunks={}-{}", Instant.now(), repoId, start, end);
+        log.info("{} [INDEX] vector batch start repoId={} chunks={}-{} batchSize={}",
+                Instant.now(), repoId, start, end, batch.size());
 
-        // First, try to embed with 422-safe handling
-        if (containsContentSafetyError(batch, repoId, start, end)) {
-            // Try to embed individual chunks, skipping problematic ones
-            return embedBatchWithContentSafetyHandling(batch, repoId, start, end);
-        }
-
-        // Try with exponential backoff for 503 errors
-        for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        // CloudflareEmbeddingService already handles HTTP 429/5xx/network retries; only retry once here for transient DB issues
+        for (int attempt = 0; attempt <= MAX_DB_RETRIES; attempt++) {
             try {
                 vectorStore.add(batch);
                 log.info("{} [INDEX] vector batch done repoId={} chunks={}-{}", Instant.now(), repoId, start, end);
                 return true;
             } catch (RuntimeException e) {
-                // Log full exception details including model and chunk range
                 logFullError(e, repoId, start, end);
 
-                // UTF-8 null byte errors cannot be fixed by retrying - log and skip batch
                 if (isUtf8NullByteError(e)) {
                     log.error("{} [EMBED] batch contains null bytes, skipping chunks repoId={}-{}: {}",
                             Instant.now(), repoId, start, end, e.getMessage());
                     return false;
                 }
 
-                // Check if this is a content safety error (422) - handled separately
                 if (isContentSafetyError(e)) {
                     log.warn("{} [EMBED] content safety error detected, will split batch", Instant.now());
-                    // Continue to embedBatchWithContentSafetyHandling
                     return embedBatchWithContentSafetyHandling(batch, repoId, start, end);
                 }
 
-                if (!isRetryableError(e) || attempt >= MAX_RETRIES) {
+                if (!isTransientDbError(e) || attempt >= MAX_DB_RETRIES) {
                     log.error("{} [EMBED] batch failed after {} retries repoId={}-{}: {}",
                             Instant.now(), attempt, repoId, start, end, e.getMessage());
                     return false;
                 }
 
-                // Exponential backoff for retry
-                long delay = (long) (BASE_RETRY_DELAY_MS * Math.pow(2, attempt));
-                log.warn("{} [EMBED] batch failed, retrying (attempt {}/{}) repoId={}-{} in {}ms: {}",
-                        Instant.now(), attempt + 1, MAX_RETRIES + 1, repoId, start, end, delay, e.getMessage());
+                long delay = BASE_RETRY_DELAY_MS;
+                log.warn("{} [INDEX] transient DB batch failure, retrying (attempt {}/{}) repoId={}-{} in {}ms: {}",
+                        Instant.now(), attempt + 1, MAX_DB_RETRIES + 1, repoId, start, end, delay, e.getMessage());
                 try {
                     Thread.sleep(delay);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
-                    log.error("Interrupted during embedding retry");
+                    log.error("Interrupted during batch retry");
                     return false;
                 }
             }
@@ -550,31 +734,16 @@ public class IndexingService {
         return false;
     }
 
-    /**
-     * Check if any chunk in the batch might cause content safety screening issues.
-     */
-    private boolean containsContentSafetyError(List<Document> batch, UUID repoId, int start, int end) {
-        // We'll detect this during the actual embedding attempt
-        return false;
-    }
-
-    /**
-     * Embed a batch when content safety errors are detected.
-     * Splits the batch and embeds individual chunks, skipping only the bad ones.
-     */
     private boolean embedBatchWithContentSafetyHandling(List<Document> batch, UUID repoId, int start, int end) {
         log.info("{} [EMBED] splitting batch {}-{} for content safety, processing individually",
                  Instant.now(), start, end);
 
-        List<Document> successfullyEmbedded = new ArrayList<>();
         int embeddedCount = 0;
 
         for (int i = 0; i < batch.size(); i++) {
             Document doc = batch.get(i);
             try {
-                // Try embedding single document
                 vectorStore.add(List.of(doc));
-                successfullyEmbedded.add(doc);
                 embeddedCount++;
             } catch (RuntimeException e) {
                 if (isContentSafetyError(e)) {
@@ -598,50 +767,35 @@ public class IndexingService {
         return false;
     }
 
-    /**
-     * Log full exception details with model information.
-     */
     private void logFullError(RuntimeException e, UUID repoId, int start, int end) {
-        // Build a detailed error message
         StringBuilder details = new StringBuilder();
         details.append("Status: embedding failed");
         details.append(", repoId: ").append(repoId);
         details.append(", chunkRange: ").append(start).append("-").append(end);
-        details.append(", model: ").append(getEmbeddingModelName());
+        details.append(", model: @cf/baai/bge-small-en-v1.5");
         details.append(", error: ").append(e.getMessage());
 
-        // Try to extract more details from the exception chain
         for (Throwable current = e; current != null; current = current.getCause()) {
             String msg = current.getMessage();
             if (msg != null && !msg.equals(e.getMessage())) {
                 details.append(", cause: ").append(msg);
             }
-            // Check for JSON response body
             if (msg != null && msg.contains("{")) {
                 details.append(", body: ").append(msg);
                 break;
             }
         }
 
-        log.error("{} [EMBED] {}", Instant.now(), details.toString(), e);
+        log.error("{} [EMBED] {}", Instant.now(), details, e);
     }
 
-    /**
-     * Get the embedding model name from configuration.
-     */
-    @Value("${spring.ai.openai.embedding.model:nvidia/nemotron-3.5-embed-1b}")
-    private String embeddingModelName;
-
-    private String getEmbeddingModelName() {
-        return embeddingModelName != null ? embeddingModelName : "nvidia/nemotron-3.5-embed-1b";
-    }
-
-    private static boolean isRetryableError(Throwable error) {
+    private static boolean isTransientDbError(Throwable error) {
         for (Throwable current = error; current != null; current = current.getCause()) {
-            String message = String.valueOf(current.getMessage()).toLowerCase(java.util.Locale.ROOT);
-            if (message.contains("429") || message.contains("503")
-                    || message.contains("quota_exceeded") || message.contains("resource_exhausted")
-                    || message.contains("service_unavailable")) {
+            String message = String.valueOf(current.getMessage()).toLowerCase(Locale.ROOT);
+            if (message.contains("connection") && (message.contains("closed") || message.contains("reset") || message.contains("timeout"))) {
+                return true;
+            }
+            if (message.contains("deadlock") || message.contains("could not serialize")) {
                 return true;
             }
         }
@@ -650,7 +804,7 @@ public class IndexingService {
 
     private static boolean isContentSafetyError(Throwable error) {
         for (Throwable current = error; current != null; current = current.getCause()) {
-            String message = String.valueOf(current.getMessage()).toLowerCase(java.util.Locale.ROOT);
+            String message = String.valueOf(current.getMessage()).toLowerCase(Locale.ROOT);
             if (message.contains("422") || message.contains("content safety") || message.contains("rejected")) {
                 return true;
             }
@@ -658,16 +812,19 @@ public class IndexingService {
         return false;
     }
 
-    /** Check if error is UTF-8 null byte encoding error from Postgres. */
     private static boolean isUtf8NullByteError(Throwable error) {
         for (Throwable current = error; current != null; current = current.getCause()) {
-            String message = String.valueOf(current.getMessage()).toLowerCase(java.util.Locale.ROOT);
+            String message = String.valueOf(current.getMessage()).toLowerCase(Locale.ROOT);
             if (message.contains("invalid byte sequence for encoding utf8") && message.contains("0x00")) {
                 return true;
             }
         }
         return false;
     }
+
+    private record FilteredTree(Map<String, String> eligibleFiles, int totalBlobs, int skippedCount) {}
+
+    private record StreamingStats(String mode, int filesProcessed, int totalChunks) {}
 
     private class IndexingResult {
         final List<String> allFiles;
@@ -685,18 +842,6 @@ public class IndexingService {
             this.removedFiles = removedFiles;
             this.unchangedFiles = unchangedFiles;
             this.currentFiles = currentFiles;
-        }
-    }
-
-    private class FileResult {
-        final String path;
-        final List<Document> chunks;
-        final Exception error;
-
-        FileResult(String path, List<Document> chunks, Exception error) {
-            this.path = path;
-            this.chunks = chunks;
-            this.error = error;
         }
     }
 

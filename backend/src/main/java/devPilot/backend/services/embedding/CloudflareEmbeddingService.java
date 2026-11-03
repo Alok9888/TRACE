@@ -7,212 +7,316 @@ import org.springframework.ai.embedding.Embedding;
 import org.springframework.ai.embedding.EmbeddingResponseMetadata;
 import org.springframework.ai.document.Document;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import java.util.List;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.time.Duration;
 import java.util.ArrayList;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Collections;
+import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Cloudflare Workers AI embedding service for bge-small-en-v1.5 model.
- * Uses 384 dimensions, optimized for speed.
- * Supports both indexing and query-time embedding with the same model.
+ * Cloudflare Workers AI embedding service for @cf/baai/bge-small-en-v1.5 (384 dims).
+ * Uses a single shared HTTP/2 HttpClient, batch size 64, separate LRU query & chunk caches,
+ * fast query timeouts, and strict error propagation (no zero vectors).
  */
 @ConditionalOnProperty(name = "embedding.provider", havingValue = "cloudflare", matchIfMissing = true)
 public class CloudflareEmbeddingService implements EmbeddingModel {
 
     private static final Logger log = LoggerFactory.getLogger(CloudflareEmbeddingService.class);
     private static final String CLOUDFLARE_ACCOUNT_ID = "cdf43a252db0973fb702921884aec43b";
-    private static final String EMBEDDING_ENDPOINT = "/ai/run/@cf/baai/bge-small-en-v1.5";
+    private static final String MODEL_NAME = "@cf/baai/bge-small-en-v1.5";
+    private static final String EMBEDDING_ENDPOINT = "/ai/run/" + MODEL_NAME;
     private static final int MODEL_DIMENSIONS = 384;
-    private static final int MAX_RETRIES = 3;
-    private static final int[] RETRY_BACKOFF_MS = {2000, 4000, 8000};
+    private static final int EMBEDDING_BATCH_SIZE = 64;
+    private static final int MAX_CONCURRENT_BATCH_CALLS = 3;
+    private static final long[] INDEX_RETRY_BACKOFF_MS = {1500L, 3000L, 6000L};
+    private static final long[] QUERY_RETRY_BACKOFF_MS = {400L, 1200L};
+    private static final Duration INDEX_HTTP_TIMEOUT = Duration.ofSeconds(45);
+    private static final Duration QUERY_HTTP_TIMEOUT = Duration.ofSeconds(8);
+    private static final long CACHE_TTL_MS = TimeUnit.MINUTES.toMillis(30);
+    private static final int MAX_QUERY_CACHE_ENTRIES = 1000;
+    private static final int MAX_CHUNK_CACHE_ENTRIES = 3000;
+    private static final Pattern HTTP_STATUS_PATTERN = Pattern.compile("HTTP\\s+(\\d{3})");
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
-    private final String api_token;
+    // Shared singleton HTTP/2 HttpClient (multiplexes concurrent batches over warm TLS connections)
+    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_2)
+            .connectTimeout(Duration.ofSeconds(5))
+            .build();
+
+    private static final ExecutorService BATCH_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
+
+    private final String apiToken;
+    @SuppressWarnings("unused")
     private final JdbcTemplate jdbcTemplate;
-    private final ObjectMapper objectMapper = new ObjectMapper();
 
-    // In-memory cache for queries (repoId + query string)
-    private final ConcurrentHashMap<String, CachedEmbedding> embeddingCache = new ConcurrentHashMap<>();
-    private final ExecutorService parallelExecutor = Executors.newFixedThreadPool(8);
+    // Separate bounded LRU TTL caches so bulk repo indexing never evicts hot RAG query embeddings
+    private final Map<String, CachedEmbedding> queryEmbeddingCache = createLruCache(MAX_QUERY_CACHE_ENTRIES);
+    private final Map<String, CachedEmbedding> chunkEmbeddingCache = createLruCache(MAX_CHUNK_CACHE_ENTRIES);
 
-    // Statistics tracking
+    // Metrics tracking
+    private final AtomicLong apiCallCount = new AtomicLong(0);
+    private final AtomicLong cacheHitCount = new AtomicLong(0);
+    private final AtomicLong cacheMissCount = new AtomicLong(0);
     private final ThreadLocal<AtomicInteger> retryCount = ThreadLocal.withInitial(() -> new AtomicInteger(0));
 
-    public CloudflareEmbeddingService(
-            JdbcTemplate jdbcTemplate) {
-        // Hardcoded Cloudflare Account ID
-        this.api_token = System.getenv("CLOUDFLARE_API_TOKEN");
-        this.jdbcTemplate = jdbcTemplate;
-        // Schema initialization is handled by PgVectorStore.initializeSchema(true)
-
-        // Log startup info
-        log.info("CloudflareEmbeddingService initialized: accountId length=" + CLOUDFLARE_ACCOUNT_ID.length());
+    private static Map<String, CachedEmbedding> createLruCache(int maxEntries) {
+        return Collections.synchronizedMap(new LinkedHashMap<>(Math.min(maxEntries, 256), 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, CachedEmbedding> eldest) {
+                return size() > maxEntries;
+            }
+        });
     }
 
-    /**
-     * Initialize the PostgreSQL vector table for Cloudflare embeddings.
-     */
-    private void initializeTable() {
-        try {
-            jdbcTemplate.execute("CREATE EXTENSION IF NOT EXISTS vector");
-            jdbcTemplate.execute(
-                "CREATE TABLE IF NOT EXISTS devpilot_vectors_cf_384 (" +
-                "id UUID PRIMARY KEY, " +
-                "repo_id UUID, " +
-                "chunk_id TEXT, " +
-                "embedding vector(384), " +
-                "content TEXT" +
-                ")"
-            );
-            log.info("Cloudflare embedding table devpilot_vectors_cf_384 initialized");
-        } catch (Exception e) {
-            log.error("Failed to initialize Cloudflare embedding table: {}", e.getMessage(), e);
-        }
+    public CloudflareEmbeddingService(JdbcTemplate jdbcTemplate) {
+        this.apiToken = System.getenv("CLOUDFLARE_API_TOKEN");
+        this.jdbcTemplate = jdbcTemplate;
+        log.info("CloudflareEmbeddingService initialized: model={} dims={} batchSize={} accountIdLen={}",
+                MODEL_NAME, MODEL_DIMENSIONS, EMBEDDING_BATCH_SIZE, CLOUDFLARE_ACCOUNT_ID.length());
+    }
+
+    public long getApiCallCount() {
+        return apiCallCount.get();
+    }
+
+    public long getCacheHitCount() {
+        return cacheHitCount.get();
+    }
+
+    public long getCacheMissCount() {
+        return cacheMissCount.get();
+    }
+
+    public double getCacheHitRate() {
+        long hits = cacheHitCount.get();
+        long total = hits + cacheMissCount.get();
+        return total == 0 ? 0.0 : (hits * 100.0) / total;
     }
 
     @Override
     public EmbeddingResponse call(EmbeddingRequest embeddingRequest) {
         List<String> texts = embeddingRequest.getInstructions();
         long startTime = System.currentTimeMillis();
-        int totalRetries = 0;
+        AtomicInteger totalRetries = new AtomicInteger(0);
 
-        List<Embedding> embeddings = new ArrayList<>();
-        int successfulCount = 0;
-        int failedCount = 0;
+        float[][] resolved = new float[texts.size()][];
+        List<Integer> missIndices = new ArrayList<>();
+        List<String> missTexts = new ArrayList<>();
+        int localHits = 0;
 
-        // Process in batches of 32 for parallel processing
-        int batchSize = 32;
-        for (int i = 0; i < texts.size(); i += batchSize) {
-            int end = Math.min(i + batchSize, texts.size());
-            List<String> batch = texts.subList(i, end);
+        for (int i = 0; i < texts.size(); i++) {
+            String text = texts.get(i);
+            float[] cached = getFromCache(chunkEmbeddingCache, text);
+            if (cached == null) {
+                cached = getFromCache(queryEmbeddingCache, normalizeQuery(text));
+            }
+            if (cached != null) {
+                resolved[i] = cached;
+                localHits++;
+                cacheHitCount.incrementAndGet();
+            } else {
+                missIndices.add(i);
+                missTexts.add(text);
+                cacheMissCount.incrementAndGet();
+            }
+        }
 
-            // Reset retry count for this batch
-            retryCount.get().set(0);
+        int batchesSent = 0;
+        if (!missTexts.isEmpty()) {
+            List<int[]> ranges = new ArrayList<>();
+            for (int i = 0; i < missTexts.size(); i += EMBEDDING_BATCH_SIZE) {
+                ranges.add(new int[]{i, Math.min(i + EMBEDDING_BATCH_SIZE, missTexts.size())});
+            }
+            batchesSent = ranges.size();
 
-            List<float[]> batchEmbeddings = embedBatchWithRetry(batch);
-
-            for (int j = 0; j < batchEmbeddings.size(); j++) {
-                if (batchEmbeddings.get(j) != null) {
-                    embeddings.add(new Embedding(batchEmbeddings.get(j), j));
-                    successfulCount++;
-                } else {
-                    // Use zero vector as placeholder for failed embeddings
-                    embeddings.add(new Embedding(new float[MODEL_DIMENSIONS], j));
-                    failedCount++;
+            if (ranges.size() == 1) {
+                processBatchRange(missTexts, missIndices, resolved, ranges.get(0)[0], ranges.get(0)[1], totalRetries);
+            } else {
+                Semaphore batchSem = new Semaphore(MAX_CONCURRENT_BATCH_CALLS);
+                List<CompletableFuture<Void>> futures = new ArrayList<>(ranges.size());
+                for (int[] range : ranges) {
+                    futures.add(CompletableFuture.runAsync(() -> {
+                        try {
+                            batchSem.acquire();
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            throw new RuntimeException("Interrupted waiting for embedding concurrency permit", ie);
+                        }
+                        try {
+                            processBatchRange(missTexts, missIndices, resolved, range[0], range[1], totalRetries);
+                        } finally {
+                            batchSem.release();
+                        }
+                    }, BATCH_EXECUTOR));
+                }
+                for (CompletableFuture<Void> f : futures) {
+                    f.join();
                 }
             }
+        }
 
-            totalRetries += retryCount.get().get();
+        List<Embedding> embeddings = new ArrayList<>(texts.size());
+        for (int i = 0; i < resolved.length; i++) {
+            embeddings.add(new Embedding(resolved[i], i));
         }
 
         long totalTime = System.currentTimeMillis() - startTime;
-
-        log.info("[EMBED-TIMING] model=@cf/baai/bge-small-en-v1.5 batchSize=32 timeMs={} status=200 avgMsPerChunk={} retries={}",
-                totalTime, successfulCount > 0 ? totalTime / successfulCount : 0, totalRetries);
+        log.info("[EMBED-TIMING] model={} texts={} batchSize={} cfCalls={} totalCfCalls={} cacheHits={} cacheMisses={} cacheHitRate={}% timeMs={} retries={}",
+                MODEL_NAME, texts.size(), EMBEDDING_BATCH_SIZE, batchesSent, apiCallCount.get(),
+                localHits, missTexts.size(), String.format(Locale.ROOT, "%.1f", getCacheHitRate()),
+                totalTime, totalRetries.get());
 
         EmbeddingResponseMetadata metadata = new EmbeddingResponseMetadata();
-        metadata.setModel("@cf/baai/bge-small-en-v1.5");
-
+        metadata.setModel(MODEL_NAME);
         return new EmbeddingResponse(embeddings, metadata);
     }
 
+    private void processBatchRange(
+            List<String> missTexts,
+            List<Integer> missIndices,
+            float[][] resolved,
+            int start,
+            int end,
+            AtomicInteger totalRetries) {
+        List<String> batch = missTexts.subList(start, end);
+        retryCount.get().set(0);
+        List<float[]> batchEmbeddings = embedBatchWithRetry(batch, INDEX_HTTP_TIMEOUT, INDEX_RETRY_BACKOFF_MS);
+        totalRetries.addAndGet(retryCount.get().get());
+
+        if (batchEmbeddings.size() != batch.size()) {
+            throw new RuntimeException("Cloudflare embedding count mismatch: expected "
+                    + batch.size() + " got " + batchEmbeddings.size());
+        }
+
+        for (int j = 0; j < batchEmbeddings.size(); j++) {
+            float[] vector = batchEmbeddings.get(j);
+            if (vector == null || vector.length != MODEL_DIMENSIONS || isAllZero(vector)) {
+                throw new RuntimeException("Invalid or zero embedding vector returned at index " + (start + j));
+            }
+            int origIndex = missIndices.get(start + j);
+            resolved[origIndex] = vector;
+            putInCache(chunkEmbeddingCache, batch.get(j), vector);
+        }
+    }
+
     /**
-     * Embed a batch with retry logic for 5xx errors only.
-     * No retry for 4xx errors - log and skip only bad chunk.
+     * Embed a batch with retry logic for HTTP 429, 5xx, and transient network errors.
+     * Non-retryable 4xx (e.g. 400, 401, 403, 422) fail immediately.
+     * NEVER returns null or zero vectors; always throws on failure.
      */
-    private List<float[]> embedBatchWithRetry(List<String> batch) {
-        for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    private List<float[]> embedBatchWithRetry(List<String> batch, Duration timeout, long[] backoffMs) {
+        RuntimeException lastError = null;
+        int maxRetries = backoffMs.length;
+        for (int attempt = 0; attempt <= maxRetries; attempt++) {
             try {
-                return callCloudflareAPI(batch);
+                return callCloudflareAPI(batch, timeout);
             } catch (RuntimeException e) {
+                lastError = e;
                 int status = extractHttpStatus(e);
 
-                // 4xx errors - don't retry, log and skip
-                if (status >= 400 && status < 500) {
-                    log.warn("[EMBED] 4xx error, skipping batch: {} - {}", status, e.getMessage());
-                    retryCount.get().incrementAndGet();
-                    return batch.stream().map(i -> (float[]) null).toList();
+                // 4xx other than 429 (e.g., 400, 401, 403, 404, 422) are non-retryable -> fail immediately
+                if (status >= 400 && status < 500 && status != 429) {
+                    log.error("[EMBED] non-retryable HTTP {} error, failing batch of {}: {}",
+                            status, batch.size(), e.getMessage());
+                    throw e;
                 }
 
-                // 5xx or timeout - retry with backoff
-                if (attempt < MAX_RETRIES) {
-                    long delay = (long) (RETRY_BACKOFF_MS[attempt] * Math.pow(2, Math.min(attempt, 2)));
+                // 429, 5xx, or transient network error (status == 0) -> retry with backoff
+                if (attempt < maxRetries) {
+                    long delay = backoffMs[attempt];
                     retryCount.get().incrementAndGet();
+                    log.warn("[EMBED] HTTP {} error (attempt {}/{}), retrying batch of {} in {}ms: {}",
+                            status, attempt + 1, maxRetries + 1, batch.size(), delay, e.getMessage());
                     try {
                         Thread.sleep(delay);
                     } catch (InterruptedException ie) {
                         Thread.currentThread().interrupt();
-                        throw new RuntimeException("Interrupted during retry", ie);
+                        throw new RuntimeException("Interrupted during embedding retry", ie);
                     }
                 } else {
-                    log.error("[EMBED] batch failed after {} retries: {}", attempt, e.getMessage());
-                    return batch.stream().map(i -> (float[]) null).toList();
+                    log.error("[EMBED] batch of {} failed after {} retries (HTTP {}): {}",
+                            batch.size(), attempt, status, e.getMessage());
+                    throw e;
                 }
             }
         }
-        return batch.stream().map(i -> (float[]) null).toList();
+        throw lastError != null ? lastError : new RuntimeException("Cloudflare embedding failed after retries");
     }
 
-    private List<float[]> callCloudflareAPI(List<String> texts) {
+    private List<float[]> callCloudflareAPI(List<String> texts, Duration timeout) {
         try {
+            apiCallCount.incrementAndGet();
             String url = "https://api.cloudflare.com/client/v4/accounts/" + CLOUDFLARE_ACCOUNT_ID + EMBEDDING_ENDPOINT;
 
-            // Build request body
-            ObjectNode requestBody = objectMapper.createObjectNode();
-            com.fasterxml.jackson.databind.node.ArrayNode textArray = requestBody.putArray("text");
+            ObjectNode requestBody = OBJECT_MAPPER.createObjectNode();
+            ArrayNode textArray = requestBody.putArray("text");
             for (String text : texts) {
                 textArray.add(text);
             }
 
-            // Make HTTP request using Java 11 HttpClient or OkHttp
-            java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
-                    .connectTimeout(java.time.Duration.ofSeconds(10))
-                    .build();
-
-            java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
-                    .uri(java.net.URI.create(url))
-                    .header("Authorization", "Bearer " + api_token)
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("Authorization", "Bearer " + apiToken)
                     .header("Content-Type", "application/json")
-                    .POST(java.net.http.HttpRequest.BodyPublishers.ofString(requestBody.toString()))
-                    .timeout(java.time.Duration.ofSeconds(120))
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody.toString()))
+                    .timeout(timeout)
                     .build();
 
-            java.net.http.HttpResponse<String> response = client.send(request,
-                    java.net.http.HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 200) {
-                throw new RuntimeException("HTTP " + response.statusCode() + ": " + response.body());
+                throw new CloudflareApiException(response.statusCode(),
+                        "HTTP " + response.statusCode() + ": " + response.body());
             }
 
-            // Parse response - structure: {"result": {"shape": [batch, 384], "data": [[...], [...]]}, "success": true}
-            // data is number[][] where data.get(i) is a 384-dim vector for chunk i
-            com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(response.body());
-            com.fasterxml.jackson.databind.JsonNode result = root.get("result");
+            JsonNode root = OBJECT_MAPPER.readTree(response.body());
+            JsonNode result = root.get("result");
             if (result == null) {
-                throw new RuntimeException("Cloudflare embedding API error - no result: " + response.body().substring(0, Math.min(1000, response.body().length())));
+                throw new RuntimeException("Cloudflare embedding API error - no result: "
+                        + response.body().substring(0, Math.min(1000, response.body().length())));
             }
-            com.fasterxml.jackson.databind.JsonNode data = result.get("data");
-            if (data == null) {
-                throw new RuntimeException("Cloudflare embedding API error - no data: " + response.body().substring(0, Math.min(1000, response.body().length())));
+            JsonNode data = result.get("data");
+            if (data == null || !data.isArray()) {
+                throw new RuntimeException("Cloudflare embedding API error - no data: "
+                        + response.body().substring(0, Math.min(1000, response.body().length())));
             }
 
-            List<float[]> embeddings = new ArrayList<>();
+            List<float[]> embeddings = new ArrayList<>(data.size());
             for (int i = 0; i < data.size(); i++) {
-                com.fasterxml.jackson.databind.JsonNode vectorArray = data.get(i);  // This is already the 384-dim vector
+                JsonNode vectorArray = data.get(i);
+                if (vectorArray == null || vectorArray.size() != MODEL_DIMENSIONS) {
+                    throw new RuntimeException("Unexpected embedding vector dimension at index " + i
+                            + ": " + (vectorArray == null ? "null" : vectorArray.size()));
+                }
                 float[] vector = new float[MODEL_DIMENSIONS];
                 for (int j = 0; j < MODEL_DIMENSIONS; j++) {
                     vector[j] = (float) vectorArray.get(j).asDouble();
@@ -221,41 +325,68 @@ public class CloudflareEmbeddingService implements EmbeddingModel {
             }
 
             return embeddings;
+        } catch (CloudflareApiException e) {
+            throw e;
         } catch (Exception e) {
             throw new RuntimeException("Cloudflare embedding API call failed: " + e.getMessage(), e);
         }
     }
 
-    private int extractHttpStatus(Throwable e) {
-        String msg = e.getMessage();
-        if (msg != null && msg.contains("HTTP ")) {
-            try {
-                String[] parts = msg.split(":");
-                if (parts.length > 0) {
-                    String statusStr = parts[0].replaceAll("[^0-9]", "");
-                    return Integer.parseInt(statusStr);
+    int extractHttpStatus(Throwable e) {
+        for (Throwable current = e; current != null; current = current.getCause()) {
+            if (current instanceof CloudflareApiException apiEx) {
+                return apiEx.statusCode;
+            }
+            String msg = current.getMessage();
+            if (msg != null) {
+                Matcher matcher = HTTP_STATUS_PATTERN.matcher(msg);
+                if (matcher.find()) {
+                    try {
+                        return Integer.parseInt(matcher.group(1));
+                    } catch (NumberFormatException ignored) {
+                    }
                 }
-            } catch (NumberFormatException ignored) {}
+            }
         }
-        return 500; // Default to 500 if cannot extract
+        return 0; // Network/timeout error (retryable)
+    }
+
+    @Override
+    public float[] embed(String text) {
+        long startTime = System.currentTimeMillis();
+        String normalized = normalizeQuery(text);
+        float[] cached = getFromCache(queryEmbeddingCache, normalized);
+        if (cached == null) {
+            cached = getFromCache(chunkEmbeddingCache, text);
+        }
+        if (cached != null) {
+            cacheHitCount.incrementAndGet();
+            long timeMs = System.currentTimeMillis() - startTime;
+            log.info("[QUERY-TIMING] queryTimeMs={} topK=5 cacheHit=true cacheHitRate={}%",
+                    timeMs, String.format(Locale.ROOT, "%.1f", getCacheHitRate()));
+            return cached;
+        }
+
+        cacheMissCount.incrementAndGet();
+        retryCount.get().set(0);
+        List<float[]> vectors = embedBatchWithRetry(List.of(text), QUERY_HTTP_TIMEOUT, QUERY_RETRY_BACKOFF_MS);
+        if (vectors.isEmpty()) {
+            throw new RuntimeException("Cloudflare embedding returned empty result for query");
+        }
+        float[] vector = vectors.get(0);
+        if (vector == null || vector.length != MODEL_DIMENSIONS || isAllZero(vector)) {
+            throw new RuntimeException("Invalid or zero embedding vector returned for query");
+        }
+        putInCache(queryEmbeddingCache, normalized, vector);
+        long timeMs = System.currentTimeMillis() - startTime;
+        log.info("[QUERY-TIMING] queryTimeMs={} topK=5 cacheHit=false cacheHitRate={}% retries={}",
+                timeMs, String.format(Locale.ROOT, "%.1f", getCacheHitRate()), retryCount.get().get());
+        return vector;
     }
 
     @Override
     public float[] embed(Document document) {
-        long startTime = System.currentTimeMillis();
-        List<String> texts = List.of(document.getFormattedContent());
-        EmbeddingResponse response = call(new EmbeddingRequest(texts, null));
-
-        long timeMs = System.currentTimeMillis() - startTime;
-        boolean cacheHit = false;
-        if (response.getResults().isEmpty()) {
-            log.warn("[QUERY-TIMING] queryTimeMs={} topK=5 cacheHit={}", timeMs, cacheHit);
-            return new float[MODEL_DIMENSIONS];
-        }
-
-        cacheHit = true;
-        log.info("[QUERY-TIMING] queryTimeMs={} topK=5 cacheHit={}", timeMs, cacheHit);
-        return response.getResults().get(0).getOutput();
+        return embed(document.getFormattedContent());
     }
 
     @Override
@@ -264,18 +395,80 @@ public class CloudflareEmbeddingService implements EmbeddingModel {
     }
 
     /**
-     * Cache lookup for repeated queries.
+     * Content-hash LRU cache lookup for repeated queries and chunks (30-minute TTL, shared across workspaces).
      */
     public float[] getCachedEmbedding(String cacheKey) {
-        CachedEmbedding cached = embeddingCache.get(cacheKey);
-        if (cached != null && System.currentTimeMillis() - cached.timestamp < TimeUnit.MINUTES.toMillis(5)) {
-            return cached.embedding;
+        if (cacheKey == null) {
+            return null;
+        }
+        float[] hit = getFromCache(queryEmbeddingCache, normalizeQuery(cacheKey));
+        if (hit != null) {
+            return hit;
+        }
+        return getFromCache(chunkEmbeddingCache, cacheKey);
+    }
+
+    public void putCachedEmbedding(String cacheKey, float[] embedding) {
+        if (cacheKey == null || embedding == null || embedding.length != MODEL_DIMENSIONS || isAllZero(embedding)) {
+            return;
+        }
+        putInCache(queryEmbeddingCache, normalizeQuery(cacheKey), embedding);
+    }
+
+    private static float[] getFromCache(Map<String, CachedEmbedding> cache, String key) {
+        if (key == null) {
+            return null;
+        }
+        String hashedKey = sha256(key);
+        CachedEmbedding cached = cache.get(hashedKey);
+        if (cached != null) {
+            if (System.currentTimeMillis() - cached.timestamp < CACHE_TTL_MS) {
+                return cached.embedding;
+            }
+            cache.remove(hashedKey);
         }
         return null;
     }
 
-    public void putCachedEmbedding(String cacheKey, float[] embedding) {
-        embeddingCache.put(cacheKey, new CachedEmbedding(embedding, System.currentTimeMillis()));
+    private static void putInCache(Map<String, CachedEmbedding> cache, String key, float[] embedding) {
+        if (key == null || embedding == null || embedding.length != MODEL_DIMENSIONS || isAllZero(embedding)) {
+            return;
+        }
+        cache.put(sha256(key), new CachedEmbedding(embedding, System.currentTimeMillis()));
+    }
+
+    private static String normalizeQuery(String text) {
+        if (text == null) {
+            return null;
+        }
+        return text.trim().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
+    }
+
+    private static String sha256(String text) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(md.digest(text.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception e) {
+            return text;
+        }
+    }
+
+    private static boolean isAllZero(float[] vector) {
+        for (float v : vector) {
+            if (v != 0.0f) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static final class CloudflareApiException extends RuntimeException {
+        final int statusCode;
+
+        CloudflareApiException(int statusCode, String message) {
+            super(message);
+            this.statusCode = statusCode;
+        }
     }
 
     private static class CachedEmbedding {

@@ -1,7 +1,7 @@
-import { getApiBaseUrl, getWorkspaceId, ApiError, type ChatMessage } from "@/lib/api";
+import { getStreamBaseUrl, getWorkspaceId, ApiError, type ChatMessage } from "@/lib/api";
 
 const RESPONSE_TIMEOUT_MS = 20_000;
-const STREAM_IDLE_TIMEOUT_MS = 10_000; // 10s idle timeout per task requirements
+const STREAM_IDLE_TIMEOUT_MS = 25_000; // Matches backend retrieval + TTFT budget; backend also sends 4s keepalives
 
 export type StreamChatHandlers = {
   onUserMessage?: (message: ChatMessage) => void;
@@ -49,7 +49,7 @@ export async function streamChatMessage(
       controller.abort();
     }, RESPONSE_TIMEOUT_MS);
     const res = await fetch(
-      `${getApiBaseUrl()}/api/chat/sessions/${sessionId}/messages`,
+      `${getStreamBaseUrl()}/api/chat/sessions/${sessionId}/messages`,
       {
         method: "POST",
         credentials: "include",

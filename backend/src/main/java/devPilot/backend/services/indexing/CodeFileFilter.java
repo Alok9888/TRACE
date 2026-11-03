@@ -37,6 +37,7 @@ public class CodeFileFilter {
 
     private static final Set<String> SKIP_FILENAMES = Set.of(
             "package-lock.json",
+            "npm-shrinkwrap.json",
             "yarn.lock",
             "pnpm-lock.yaml",
             "composer.lock",
@@ -51,7 +52,7 @@ public class CodeFileFilter {
         String lower = normalized.toLowerCase(Locale.ROOT);
 
         for (String part : lower.split("/")) {
-            if (SKIP_DIR_PARTS.contains(part)) {
+            if (SKIP_DIR_PARTS.contains(part) || (part.startsWith(".") && part.length() > 1)) {
                 return false;
             }
         }
@@ -60,7 +61,7 @@ public class CodeFileFilter {
         if (SKIP_FILENAMES.contains(fileName)) {
             return false;
         }
-        if (fileName.startsWith(".")) {
+        if (fileName.startsWith(".") || fileName.endsWith(".min.js") || fileName.endsWith(".min.css")) {
             return false;
         }
         if (sizeBytes > maxFileBytes) {

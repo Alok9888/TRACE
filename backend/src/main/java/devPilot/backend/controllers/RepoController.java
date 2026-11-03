@@ -3,6 +3,10 @@ package devPilot.backend.controllers;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.regex.Pattern;
+
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,18 +24,31 @@ import devPilot.backend.dto.AnalyzeRepoRequest;
 import devPilot.backend.config.WorkspaceContext;
 import devPilot.backend.services.RepoService;
 import devPilot.backend.services.indexing.IndexingService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 @RestController
 @RequestMapping("/api/repos")
-@RequiredArgsConstructor
 @Slf4j
 public class RepoController {
+
+    private static final Pattern GITHUB_REPO_PATTERN = Pattern
+            .compile("^(?:https://github\\.com/)?([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\\.git)?/?$");
 
     private final RepoService repoService;
     private final IndexingService indexingService;
     private final WorkspaceContext workspaceContext;
+    private final Executor ioExecutor;
+
+    public RepoController(
+            RepoService repoService,
+            IndexingService indexingService,
+            WorkspaceContext workspaceContext,
+            @Qualifier("ioExecutor") Executor ioExecutor) {
+        this.repoService = repoService;
+        this.indexingService = indexingService;
+        this.workspaceContext = workspaceContext;
+        this.ioExecutor = ioExecutor;
+    }
 
     @GetMapping
     public List<RepositoryResponse> list() {
@@ -43,9 +60,7 @@ public class RepoController {
             @RequestBody @jakarta.validation.Valid AnalyzeRepoRequest request,
             @RequestParam(defaultValue = "false") boolean force) {
         String value = request.repoUrl().trim();
-        java.util.regex.Matcher matcher = java.util.regex.Pattern
-                .compile("^(?:https://github\\.com/)?([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\\.git)?/?$")
-                .matcher(value);
+        java.util.regex.Matcher matcher = GITHUB_REPO_PATTERN.matcher(value);
         if (!matcher.matches()) {
             throw new devPilot.backend.exceptions.BadRequestException("Enter a valid public GitHub repository URL");
         }
@@ -63,7 +78,7 @@ public class RepoController {
                 } catch (Exception e) {
                     log.error("Background analyze failed for {}/{}: {}", owner, name, e.getMessage(), e);
                 }
-            });
+            }, ioExecutor);
         }
         HttpStatus responseStatus = repo.getIndexStatus() == devPilot.backend.entity.IndexStatus.INDEXING
                 ? HttpStatus.ACCEPTED
@@ -77,10 +92,7 @@ public class RepoController {
         if (repoId != null) {
             return repoService.status(repoId, workspaceId);
         }
-        // Parse owner/name from URL
-        java.util.regex.Matcher matcher = java.util.regex.Pattern
-                .compile("^(?:https://github\\.com/)?([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\\.git)?/?$")
-                .matcher(url);
+        java.util.regex.Matcher matcher = GITHUB_REPO_PATTERN.matcher(url);
         if (!matcher.matches()) {
             throw new devPilot.backend.exceptions.BadRequestException("Invalid URL");
         }
@@ -89,7 +101,7 @@ public class RepoController {
 
     @GetMapping("/{id}")
     public RepositoryResponse get(@PathVariable UUID id) {
-        return repoService.toResponse(repoService.requireOwned(id, workspaceContext.getWorkspaceId()));
+        return repoService.getResponse(id, workspaceContext.getWorkspaceId());
     }
 
     @PostMapping("/{id}/index")

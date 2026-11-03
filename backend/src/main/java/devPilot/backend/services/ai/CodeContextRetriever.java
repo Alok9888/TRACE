@@ -24,11 +24,12 @@ public class CodeContextRetriever {
     private final JdbcTemplate jdbcTemplate;
 
     public int embeddingDimensions() {
-        return 768;
+        return 384;
     }
 
     public RetrievedContext retrieve(UUID userId, UUID repositoryId, String question) {
-        log.info("{} [VECTOR] search start repo={} queryLength={}", Instant.now(), repositoryId, question.length());
+        log.info("{} [VECTOR] search start repo={} queryLength={} topK={} threshold={}",
+                Instant.now(), repositoryId, question.length(), RagSettings.TOP_K_CHUNKS, RagSettings.SIMILARITY_THRESHOLD);
 
         // Build filter expression as string - compatible with Spring AI 2.0.0 PGVector
         String filterExpression = String.format(
@@ -40,70 +41,96 @@ public class CodeContextRetriever {
         var search = SearchRequest.builder()
                 .query(question)
                 .topK(RagSettings.TOP_K_CHUNKS)
+                .similarityThreshold(RagSettings.SIMILARITY_THRESHOLD)
                 .filterExpression(filterExpression)
                 .build();
 
-        jdbcTemplate.setQueryTimeout(10);
+        // Do NOT mutate shared singleton jdbcTemplate.setQueryTimeout(...) — that leaks onto concurrent indexing writes!
         java.util.List<Document> documents;
         try {
-            documents = retryVectorSearch(search);
+            documents = executeVectorSearch(search);
         } catch (RuntimeException e) {
-            log.error("{} [EMBED] vector search failed after retries repo={}: {}", Instant.now(), repositoryId, e.getMessage());
+            log.error("{} [EMBED] vector search failed repo={}: {}", Instant.now(), repositoryId, e.getMessage());
             documents = java.util.List.of();
         }
         if (documents == null) {
             documents = java.util.List.of();
         }
-        log.info("{} [VECTOR] found {} results repo={}", Instant.now(), documents.size(), repositoryId);
+        int rawCount = documents.size();
+        java.util.List<Document> filtered = documents.stream()
+                .filter(doc -> doc.getScore() == null || doc.getScore() >= RagSettings.SIMILARITY_THRESHOLD)
+                .toList();
 
-        var citations = documents.stream()
+        // Enforce strict context character budget so total LLM input stays < 1200 tokens
+        java.util.List<Document> selected = new java.util.ArrayList<>();
+        StringBuilder contextBuilder = new StringBuilder();
+        final String separator = "\n\n---\n\n";
+
+        for (Document doc : filtered) {
+            String text = doc.getText();
+            if (text == null || text.isBlank()) {
+                continue;
+            }
+            int projected = contextBuilder.length() + (contextBuilder.isEmpty() ? 0 : separator.length()) + text.length();
+            if (projected > RagSettings.MAX_CONTEXT_CHARS) {
+                if (selected.isEmpty()) {
+                    // Always keep the top-1 relevant chunk, truncated cleanly to budget
+                    contextBuilder.append(text, 0, Math.min(text.length(), RagSettings.MAX_CONTEXT_CHARS));
+                    selected.add(doc);
+                }
+                break;
+            }
+            if (!contextBuilder.isEmpty()) {
+                contextBuilder.append(separator);
+            }
+            contextBuilder.append(text);
+            selected.add(doc);
+        }
+
+        var citations = selected.stream()
                 .map(citationMapper::fromDocument)
                 .distinct()
                 .toList();
 
-        var contextText = documents.stream()
-                .map(Document::getText)
-                .collect(Collectors.joining("\n\n---\n\n"));
-
+        var contextText = contextBuilder.toString();
         if (contextText.isBlank()) {
             contextText = NO_MATCHES;
         }
 
+        int estContextTokens = contextText.length() / 4;
+        log.info("{} [VECTOR] found {} results (selected={}, raw={}, threshold={}) repo={} estContextTokens={}",
+                Instant.now(), filtered.size(), selected.size(), rawCount, RagSettings.SIMILARITY_THRESHOLD,
+                repositoryId, estContextTokens);
+
         return new RetrievedContext(citations, contextText);
     }
 
-    private java.util.List<Document> retryVectorSearch(SearchRequest search) {
-        int[] delays = {2000, 4000, 8000, 16000}; // Exponential backoff
-        RuntimeException lastError = null;
-
-        for (int attempt = 0; attempt <= delays.length; attempt++) {
-            try {
-                return vectorStore.similaritySearch(search);
-            } catch (RuntimeException e) {
-                lastError = e;
-                if (!isRetryableError(e) || attempt >= delays.length) {
-                    break;
-                }
-                long delay = (long) (delays[0] * Math.pow(2, attempt));
-                log.warn("{} [EMBED] vector search failed (attempt {}/{}); retrying in {}ms: {}",
-                        Instant.now(), attempt + 1, delays.length + 1, delay, e.getMessage());
-                try {
-                    Thread.sleep(delay);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    throw new RuntimeException("Interrupted during embedding retry", ie);
-                }
+    /**
+     * Executes vector similarity search without duplicating CloudflareEmbeddingService's retry loop.
+     * Retries once quickly (300ms) only on transient Postgres/connection failures.
+     */
+    private java.util.List<Document> executeVectorSearch(SearchRequest search) {
+        try {
+            return vectorStore.similaritySearch(search);
+        } catch (RuntimeException e) {
+            if (!isTransientDbError(e)) {
+                throw e;
             }
+            log.warn("{} [VECTOR] transient DB search error, retrying once in 300ms: {}", Instant.now(), e.getMessage());
+            try {
+                Thread.sleep(300);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted during vector search retry", ie);
+            }
+            return vectorStore.similaritySearch(search);
         }
-        throw lastError != null ? lastError : new RuntimeException("Vector search failed after retries");
     }
 
-    private static boolean isRetryableError(Throwable error) {
+    private static boolean isTransientDbError(Throwable error) {
         for (Throwable current = error; current != null; current = current.getCause()) {
             String message = String.valueOf(current.getMessage()).toLowerCase(java.util.Locale.ROOT);
-            if (message.contains("429") || message.contains("503")
-                    || message.contains("quota_exceeded") || message.contains("resource_exhausted")
-                    || message.contains("service_unavailable")) {
+            if (message.contains("connection") && (message.contains("closed") || message.contains("reset") || message.contains("timeout"))) {
                 return true;
             }
         }

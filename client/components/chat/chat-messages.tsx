@@ -1,7 +1,7 @@
 "use client";
 
 import { Bot, UserRound } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { CitationChips } from "@/components/chat/citation-chips";
@@ -26,6 +26,62 @@ const LOADING_MESSAGES = [
   "Thinking through the answer...",
   "Generating response..."
 ];
+
+const MessageRow = memo(function MessageRow({
+  message,
+  repo,
+}: {
+  message: ChatMessage;
+  repo: Repository;
+}) {
+  const isUser = message.role === "USER";
+  return (
+    <Message align={isUser ? "end" : "start"}>
+      <MessageAvatar>
+        <Avatar className="size-8">
+          <AvatarFallback
+            className={cn(
+              isUser
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted"
+            )}
+          >
+            {isUser ? (
+              <UserRound className="size-4" />
+            ) : (
+              <Bot className="size-4" />
+            )}
+          </AvatarFallback>
+        </Avatar>
+      </MessageAvatar>
+      <MessageContent>
+        <Bubble
+          variant={isUser ? "default" : "muted"}
+          align={isUser ? "end" : "start"}
+          className={cn(!isUser && "max-w-full")}
+        >
+          <BubbleContent className={cn(!isUser && "w-full max-w-full px-4 py-3")}>
+            {isUser ? (
+              <span className="whitespace-pre-wrap">
+                {message.content}
+              </span>
+            ) : (
+              <ChatMarkdown content={message.content} />
+            )}
+          </BubbleContent>
+        </Bubble>
+        {!isUser && (message.citations?.length > 0 || message.responseModel?.fallback) && (
+          <MessageFooter>
+            {message.citations?.length > 0 && <CitationChips repo={repo} citations={message.citations} />}
+            {message.responseModel?.fallback && (
+              <span>Answered with {message.responseModel.provider ?? "AI"} {message.responseModel.model} (fallback; primary model unavailable)</span>
+            )}
+          </MessageFooter>
+        )}
+      </MessageContent>
+    </Message>
+  );
+});
 
 export function ChatMessages({
   repo,
@@ -64,8 +120,9 @@ export function ChatMessages({
   }, [streaming, streamText]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamText]);
+    // Use instant scroll during active token streaming to prevent smooth-scroll layout thrashing
+    bottomRef.current?.scrollIntoView({ behavior: streaming ? "auto" : "smooth" });
+  }, [messages, streamText, streaming]);
 
   if (isLoading) {
     return (
@@ -91,55 +148,9 @@ export function ChatMessages({
         )}
 
         <MessageGroup>
-          {messages.map((message) => {
-            const isUser = message.role === "USER";
-            return (
-              <Message key={message.id} align={isUser ? "end" : "start"}>
-                <MessageAvatar>
-                  <Avatar className="size-8">
-                    <AvatarFallback
-                      className={cn(
-                        isUser
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted"
-                      )}
-                    >
-                      {isUser ? (
-                        <UserRound className="size-4" />
-                      ) : (
-                        <Bot className="size-4" />
-                      )}
-                    </AvatarFallback>
-                  </Avatar>
-                </MessageAvatar>
-                <MessageContent>
-                  <Bubble
-                    variant={isUser ? "default" : "muted"}
-                    align={isUser ? "end" : "start"}
-                    className={cn(!isUser && "max-w-full")}
-                  >
-                    <BubbleContent className={cn(!isUser && "w-full max-w-full px-4 py-3")}>
-                      {isUser ? (
-                        <span className="whitespace-pre-wrap">
-                          {message.content}
-                        </span>
-                      ) : (
-                        <ChatMarkdown content={message.content} />
-                      )}
-                    </BubbleContent>
-                  </Bubble>
-                  {!isUser && (message.citations?.length > 0 || message.responseModel?.fallback) && (
-                    <MessageFooter>
-                      {message.citations?.length > 0 && <CitationChips repo={repo} citations={message.citations} />}
-                      {message.responseModel?.fallback && (
-                        <span>Answered with {message.responseModel.provider ?? "AI"} {message.responseModel.model} (fallback; primary model unavailable)</span>
-                      )}
-                    </MessageFooter>
-                  )}
-                </MessageContent>
-              </Message>
-            );
-          })}
+          {messages.map((message) => (
+            <MessageRow key={message.id} message={message} repo={repo} />
+          ))}
 
           {/* Loading messages - appears above AI response when streaming starts */}
           {showLoading && (

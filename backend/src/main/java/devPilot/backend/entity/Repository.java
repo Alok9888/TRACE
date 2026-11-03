@@ -10,6 +10,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
@@ -20,7 +21,14 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "repositories", uniqueConstraints = @UniqueConstraint(columnNames = { "user_id", "github_repo_id" }))
+@Table(
+    name = "repositories",
+    uniqueConstraints = @UniqueConstraint(columnNames = { "user_id", "github_repo_id" }),
+    indexes = {
+        @Index(name = "idx_repositories_user_full_name", columnList = "user_id, full_name"),
+        @Index(name = "idx_repositories_user_owner_name", columnList = "user_id, owner, name")
+    }
+)
 @Getter
 @Setter
 @AllArgsConstructor

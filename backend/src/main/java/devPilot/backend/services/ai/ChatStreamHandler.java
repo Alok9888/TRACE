@@ -1,19 +1,30 @@
 package devPilot.backend.services.ai;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Locale;
 import java.util.function.Supplier;
 
 import org.springframework.ai.chat.client.ChatClient;
@@ -21,13 +32,14 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.http.MediaType;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
-import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.task.AsyncTaskExecutor;
+import org.springframework.http.MediaType;
+import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import devPilot.backend.dto.ChatMessageResponse;
+import devPilot.backend.dto.CitationDto;
 import devPilot.backend.entity.ChatMessage;
 import devPilot.backend.entity.MessageRole;
 import devPilot.backend.repository.ChatMessageRepository;
@@ -40,24 +52,59 @@ public class ChatStreamHandler {
 
     private static final long EMBEDDING_TIMEOUT_SECONDS = 15;
     private static final long CHAT_TIMEOUT_SECONDS = 60;
+    private static final long HEARTBEAT_INTERVAL_SECONDS = 4;
+    private static final long QA_CACHE_TTL_MS = TimeUnit.MINUTES.toMillis(10);
+    private static final int MAX_QA_CACHE_ENTRIES = 500;
+    private static final long COOLDOWN_429_MS = TimeUnit.MINUTES.toMillis(5);
+    private static final long COOLDOWN_503_MS = TimeUnit.SECONDS.toMillis(60);
+    private static final long COOLDOWN_404_MS = TimeUnit.MINUTES.toMillis(30);
 
-    private final ChatModel groqChatModel;
-    private final ChatModel geminiFallbackChatModel;
+    private static final ScheduledExecutorService HEARTBEAT_SCHEDULER =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "sse-heartbeat");
+                t.setDaemon(true);
+                return t;
+            });
+
+    // Bounded LRU cache (avoids full-cache .clear() eviction cliffs)
+    private final Map<String, CachedQaAnswer> qaCache = Collections.synchronizedMap(
+            new LinkedHashMap<>(256, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, CachedQaAnswer> eldest) {
+                    return size() > MAX_QA_CACHE_ENTRIES;
+                }
+            });
+
+    // Per-model circuit breaker cooldown timestamps (epoch ms)
+    private final ConcurrentHashMap<String, Long> modelCooldownUntil = new ConcurrentHashMap<>();
+
+    private final ChatClient groqChatClient;
+    private final ChatClient geminiFallbackChatClient;
     private final ChatMessageRepository chatMessageRepository;
     private final CitationMapper citationMapper;
     private final CodeContextRetriever codeContextRetriever;
     private final ChatPromptBuilder chatPromptBuilder;
 
-    @Value("${app.groq.chat.models}")
+    @Value("${app.groq.chat.models:openai/gpt-oss-20b,llama-3.3-70b-versatile,openai/gpt-oss-120b}")
     private String configuredGroqModels;
+
+    @Value("${app.groq.reasoning-effort:low}")
+    private String configuredReasoningEffort;
+
+    @Value("${app.groq.max-tokens:1024}")
+    private int configuredMaxTokens;
 
     @Autowired
     @Qualifier("chatExecutor")
-    private ThreadPoolTaskExecutor chatExecutor;
+    private AsyncTaskExecutor chatExecutor;
 
     @Autowired
     @Qualifier("ragExecutor")
-    private ThreadPoolTaskExecutor ragExecutor;
+    private AsyncTaskExecutor ragExecutor;
+
+    @Autowired
+    @Qualifier("ioExecutor")
+    private AsyncTaskExecutor ioExecutor;
 
     public ChatStreamHandler(
             @Qualifier("openAiChatModel") ChatModel groqChatModel,
@@ -66,8 +113,8 @@ public class ChatStreamHandler {
             CitationMapper citationMapper,
             CodeContextRetriever codeContextRetriever,
             ChatPromptBuilder chatPromptBuilder) {
-        this.groqChatModel = groqChatModel;
-        this.geminiFallbackChatModel = geminiFallbackChatModel;
+        this.groqChatClient = ChatClient.builder(groqChatModel).build();
+        this.geminiFallbackChatClient = ChatClient.builder(geminiFallbackChatModel).build();
         this.chatMessageRepository = chatMessageRepository;
         this.citationMapper = citationMapper;
         this.codeContextRetriever = codeContextRetriever;
@@ -80,6 +127,7 @@ public class ChatStreamHandler {
             Supplier<ChatStreamContext> contextSupplier) {
 
         SseEmitter emitter = new SseEmitter(RagSettings.STREAM_TIMEOUT_MS);
+        Object sseLock = new Object();
         AtomicBoolean terminalSent = new AtomicBoolean(false);
         AtomicBoolean cancelWorker = new AtomicBoolean(false);
         AtomicReference<Future<?>> workerTask = new AtomicReference<>();
@@ -87,13 +135,13 @@ public class ChatStreamHandler {
         log.info("{} [CHAT] received sessionId={} content={}", now(), requestedSessionId, question);
         emitter.onTimeout(() -> {
             log.error("{} [SSE] timeout sessionId={} stage={}", now(), requestedSessionId, stage.get());
-            sendError(emitter, terminalSent, "Chat request timed out. Please try again.");
+            sendError(emitter, sseLock, terminalSent, "Chat request timed out. Please try again.");
             cancelWorker.set(true);
             cancelTask(workerTask.get());
         });
         emitter.onError(error -> {
             log.error("{} [SSE] transport error sessionId={}", now(), requestedSessionId, error);
-            sendError(emitter, terminalSent, "The chat connection failed. Please try again.");
+            sendError(emitter, sseLock, terminalSent, "The chat connection failed. Please try again.");
             cancelWorker.set(true);
             cancelTask(workerTask.get());
         });
@@ -107,42 +155,93 @@ public class ChatStreamHandler {
         try {
             // Open the SSE response before database lookup or RAG work begins.
             log.info("{} [SSE] sending stream-open sessionId={}", now(), requestedSessionId);
-            emitter.send(SseEmitter.event().comment("connected"));
+            safeSend(emitter, sseLock, SseEmitter.event().comment("connected"));
             Future<?> task = chatExecutor.submit(() -> runChat(
-                    emitter, terminalSent, stage, requestedSessionId, question, contextSupplier));
+                    emitter, sseLock, terminalSent, stage, requestedSessionId, question, contextSupplier));
             workerTask.set(task);
             if (cancelWorker.get()) {
                 cancelTask(task);
             }
         } catch (Exception error) {
             log.error("{} [CHAT] could not schedule sessionId={}", now(), requestedSessionId, error);
-            sendError(emitter, terminalSent, "Chat is busy. Please try again shortly.");
+            sendError(emitter, sseLock, terminalSent, "Chat is busy. Please try again shortly.");
         }
         return emitter;
     }
 
     private void runChat(
             SseEmitter emitter,
+            Object sseLock,
             AtomicBoolean terminalSent,
             AtomicReference<String> stage,
             UUID requestedSessionId,
             String question,
             Supplier<ChatStreamContext> contextSupplier) {
         UUID sessionId = requestedSessionId;
+        long requestStartMs = System.currentTimeMillis();
+        AtomicBoolean anyTokenSent = new AtomicBoolean(false);
+        ScheduledFuture<?> heartbeat = HEARTBEAT_SCHEDULER.scheduleAtFixedRate(() -> {
+            if (terminalSent.get() || anyTokenSent.get()) {
+                return;
+            }
+            try {
+                safeSend(emitter, sseLock, SseEmitter.event().comment("keepalive"));
+            } catch (Exception ignored) {
+                // Client disconnected or stream closed; main flow will clean up.
+            }
+        }, HEARTBEAT_INTERVAL_SECONDS, HEARTBEAT_INTERVAL_SECONDS, TimeUnit.SECONDS);
+
         try {
             stage.set("SESSION");
             ChatStreamContext streamContext = contextSupplier.get();
             sessionId = streamContext.sessionId();
+            UUID finalSessionId = sessionId;
 
-            log.info("{} [SSE] sending user_message sessionId={}", now(), sessionId);
-            emitter.send(SseEmitter.event().name("user_message").data(streamContext.userMessage()));
-            log.info("{} [SSE] sent user_message sessionId={}", now(), sessionId);
+            // Start persisting the user message asynchronously so it overlaps with QA cache / RAG retrieval
+            CompletableFuture<ChatMessage> userMsgFuture = CompletableFuture.supplyAsync(
+                    () -> chatMessageRepository.save(ChatMessage.builder()
+                            .sessionId(finalSessionId)
+                            .role(MessageRole.USER)
+                            .content(question)
+                            .build()),
+                    ioExecutor);
 
+            // Check Q&A response cache immediately (keyed by repo + index version + normalized question)
+            String qaCacheKey = buildQaCacheKey(streamContext.repositoryId(), streamContext.repositoryVersion(), question);
+            CachedQaAnswer cachedAnswer = getCachedQaAnswer(qaCacheKey);
+            if (cachedAnswer != null) {
+                log.info("{} [CHAT] qaCacheHit=true sessionId={} repo={} savedEmbedAndLlm=true latencyMs={}",
+                        now(), sessionId, streamContext.repositoryId(), System.currentTimeMillis() - requestStartMs);
+                heartbeat.cancel(false);
+                ChatMessage savedUser = userMsgFuture.get(10, TimeUnit.SECONDS);
+                safeSend(emitter, sseLock, SseEmitter.event().name("user_message").data(toMessageResponse(savedUser)));
+                anyTokenSent.set(true);
+                safeSend(emitter, sseLock, SseEmitter.event().name("token").data(cachedAnswer.answer));
+                ChatMessage assistant = chatMessageRepository.save(ChatMessage.builder()
+                        .sessionId(sessionId)
+                        .role(MessageRole.ASSISTANT)
+                        .content(cachedAnswer.answer)
+                        .citations(citationMapper.toJson(cachedAnswer.citations))
+                        .build());
+                safeSend(emitter, sseLock, SseEmitter.event().name("model").data(Map.of(
+                        "model", cachedAnswer.model,
+                        "provider", cachedAnswer.provider,
+                        "fallback", cachedAnswer.usedFallback,
+                        "cached", true)));
+                safeSend(emitter, sseLock, SseEmitter.event().name("assistant_message").data(toMessageResponse(assistant)));
+                sendDone(emitter, sseLock, terminalSent, sessionId);
+                return;
+            }
+
+            // Kick off RAG retrieval BEFORE waiting for userMsgFuture so DB INSERT overlaps with Cloudflare + PgVector!
             stage.set("EMBED/VECTOR");
             log.info("{} [EMBED] start sessionId={}", now(), sessionId);
-            log.info("{} [VECTOR] search start sessionId={}", now(), sessionId);
             Future<RetrievedContext> retrieval = ragExecutor.submit(
                     () -> codeContextRetriever.retrieve(streamContext.userId(), streamContext.repositoryId(), question));
+
+            ChatMessage savedUser = userMsgFuture.get(10, TimeUnit.SECONDS);
+            safeSend(emitter, sseLock, SseEmitter.event().name("user_message").data(toMessageResponse(savedUser)));
+
             RetrievedContext retrievedContext;
             try {
                 retrievedContext = retrieval.get(EMBEDDING_TIMEOUT_SECONDS, TimeUnit.SECONDS);
@@ -150,52 +249,89 @@ public class ChatStreamHandler {
                 retrieval.cancel(true);
                 throw error;
             }
-            log.info("{} [EMBED] done sessionId={} dims={}", now(), sessionId,
-                    codeContextRetriever.embeddingDimensions());
-            log.info("{} [VECTOR] received {} citations sessionId={}", now(), retrievedContext.citations().size(), sessionId);
+            log.info("{} [VECTOR] done sessionId={} dims={} citations={} elapsedMs={}",
+                    now(), sessionId, codeContextRetriever.embeddingDimensions(),
+                    retrievedContext.citations().size(), System.currentTimeMillis() - requestStartMs);
 
+            String systemPrompt = chatPromptBuilder.systemPrompt(streamContext.repositoryName());
             String prompt = retrievedContext.citations().isEmpty()
                     ? "No relevant code found, answering from general context.\n\n" + question
                     : chatPromptBuilder.userPrompt(retrievedContext.contextText(), question);
+            int estInputTokens = (systemPrompt.length() + prompt.length()) / 4;
 
             stage.set("AI");
             List<String> triedModels = new ArrayList<>();
-            List<String> tokens = null;
             String successfulModel = null;
             String successfulProvider = null;
             Throwable lastModelError = null;
             boolean sawQuotaFailure = false;
+
+            StringBuilder fullReply = new StringBuilder();
+            AtomicInteger tokenCount = new AtomicInteger(0);
+            AtomicLong firstTokenMs = new AtomicLong(-1L);
+            boolean noRelevantCode = retrievedContext.citations().isEmpty();
+
             List<String> models = Arrays.stream(configuredGroqModels.split(","))
                     .map(String::trim).filter(model -> !model.isEmpty()).toList();
-            if (models.isEmpty()) models = List.of("openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b");
+            if (models.isEmpty()) models = List.of("openai/gpt-oss-20b", "llama-3.3-70b-versatile", "openai/gpt-oss-120b");
+
             for (String model : models) {
+                if (isModelInCooldown(model)) {
+                    log.info("{} [AI] skipping cooled-down model={} sessionId={}", now(), model, sessionId);
+                    continue;
+                }
                 triedModels.add(model);
                 try {
                     String shortModel = shortModel(model);
-                    log.info("{} [AI] provider=Groq model={} modelId={} sessionId={}", now(), shortModel, model, sessionId);
-                    tokens = ChatClient.builder(groqChatModel).build().prompt()
-                            .options(OpenAiChatOptions.builder().model(model))
-                            .system(chatPromptBuilder.systemPrompt(streamContext.repositoryName()))
-                            .user(prompt).stream().content().collectList()
-                            .block(Duration.ofSeconds(CHAT_TIMEOUT_SECONDS));
+                    log.info("{} [AI] provider=Groq model={} modelId={} sessionId={} estInputTokens={}",
+                            now(), shortModel, model, sessionId, estInputTokens);
+                    long aiStartMs = System.currentTimeMillis();
+
+                    OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
+                            .model(model)
+                            .maxCompletionTokens(configuredMaxTokens);
+                    if (model.contains("gpt-oss") && configuredReasoningEffort != null && !configuredReasoningEffort.isBlank()) {
+                        optionsBuilder.reasoningEffort(configuredReasoningEffort.trim());
+                    }
+
+                    groqChatClient.prompt()
+                            .options(optionsBuilder.build())
+                            .system(systemPrompt)
+                            .user(prompt)
+                            .stream()
+                            .content()
+                            .timeout(Duration.ofSeconds(CHAT_TIMEOUT_SECONDS))
+                            .doOnNext(token -> emitToken(
+                                    emitter, sseLock, heartbeat, fullReply, anyTokenSent, tokenCount, firstTokenMs,
+                                    noRelevantCode, finalSessionId, requestStartMs, token))
+                            .blockLast(Duration.ofSeconds(CHAT_TIMEOUT_SECONDS));
+
+                    modelCooldownUntil.remove(model);
                     successfulModel = model;
                     successfulProvider = "Groq";
-                    log.info("{} [AI] success provider=Groq model={} sessionId={} tokenCount={}", now(), shortModel, sessionId,
-                            tokens == null ? 0 : tokens.size());
+                    long aiMs = System.currentTimeMillis() - aiStartMs;
+                    long totalMs = System.currentTimeMillis() - requestStartMs;
+                    log.info("{} [AI] success provider=Groq model={} sessionId={} estInputTokens={} tokenCount={} ttftMs={} aiMs={} totalMs={}",
+                            now(), shortModel, sessionId, estInputTokens, tokenCount.get(), firstTokenMs.get(), aiMs, totalMs);
                     break;
                 } catch (Exception modelError) {
+                    if (anyTokenSent.get() || modelError instanceof UncheckedIOException) {
+                        throw modelError;
+                    }
                     lastModelError = unwrap(modelError);
                     int status = httpStatus(lastModelError);
                     log.warn("{} [AI] provider=Groq model={} failed status={} sessionId={}", now(), model, status, sessionId, modelError);
-                    if (status == 401 || status == 404) {
-                        log.error("{} [AI] provider=Groq fatal {} model={} - not trying fallback", now(), status, model);
+                    if (status == 401) {
+                        log.error("{} [AI] provider=Groq fatal 401 model={} - not trying fallback", now(), model);
                         throw new ProviderStreamException("GROQ_FATAL", model, triedModels, errorMessage(lastModelError), null, 0, lastModelError);
                     }
-                    if (status == 429 || status == 503) {
-                        sawQuotaFailure |= status == 429;
-                        if (triedModels.size() < models.size()) {
-                        log.warn("{} [AI] provider=Groq model={} failed {}, trying next fallback", now(), model, status);
-                        }
+                    if (status == 429) {
+                        sawQuotaFailure = true;
+                        putModelCooldown(model, COOLDOWN_429_MS);
+                    } else if (status == 503) {
+                        putModelCooldown(model, COOLDOWN_503_MS);
+                    } else if (status == 404) {
+                        putModelCooldown(model, COOLDOWN_404_MS);
                     } else {
                         log.warn("{} [AI] provider=Groq model={} failed status={}, moving to Gemini fallback", now(), model, status, modelError);
                         break;
@@ -206,16 +342,31 @@ public class ChatStreamHandler {
                 try {
                     String geminiModel = "gemini-2.5-flash";
                     triedModels.add(geminiModel);
-                    log.info("{} [AI] provider=Gemini model={} last-resort fallback sessionId={}", now(), geminiModel, sessionId);
-                    tokens = ChatClient.builder(geminiFallbackChatModel).build().prompt()
-                            .system(chatPromptBuilder.systemPrompt(streamContext.repositoryName()))
-                            .user(prompt).stream().content().collectList()
-                            .block(Duration.ofSeconds(CHAT_TIMEOUT_SECONDS));
+                    log.info("{} [AI] provider=Gemini model={} last-resort fallback sessionId={} estInputTokens={}",
+                            now(), geminiModel, sessionId, estInputTokens);
+                    long aiStartMs = System.currentTimeMillis();
+
+                    geminiFallbackChatClient.prompt()
+                            .system(systemPrompt)
+                            .user(prompt)
+                            .stream()
+                            .content()
+                            .timeout(Duration.ofSeconds(CHAT_TIMEOUT_SECONDS))
+                            .doOnNext(token -> emitToken(
+                                    emitter, sseLock, heartbeat, fullReply, anyTokenSent, tokenCount, firstTokenMs,
+                                    noRelevantCode, finalSessionId, requestStartMs, token))
+                            .blockLast(Duration.ofSeconds(CHAT_TIMEOUT_SECONDS));
+
                     successfulModel = geminiModel;
                     successfulProvider = "Gemini";
-                    log.info("{} [AI] success provider=Gemini model={} sessionId={} tokenCount={}", now(), geminiModel, sessionId,
-                            tokens == null ? 0 : tokens.size());
+                    long aiMs = System.currentTimeMillis() - aiStartMs;
+                    long totalMs = System.currentTimeMillis() - requestStartMs;
+                    log.info("{} [AI] success provider=Gemini model={} sessionId={} estInputTokens={} tokenCount={} ttftMs={} aiMs={} totalMs={}",
+                            now(), geminiModel, sessionId, estInputTokens, tokenCount.get(), firstTokenMs.get(), aiMs, totalMs);
                 } catch (Exception fallbackError) {
+                    if (anyTokenSent.get() || fallbackError instanceof UncheckedIOException) {
+                        throw fallbackError;
+                    }
                     lastModelError = unwrap(fallbackError);
                     int status = httpStatus(lastModelError);
                     String code = sawQuotaFailure || status == 429 ? "QUOTA_EXCEEDED"
@@ -229,26 +380,17 @@ public class ChatStreamHandler {
                 }
             }
 
+            heartbeat.cancel(false);
             stage.set("SSE");
-            StringBuilder fullReply = new StringBuilder();
-            if (retrievedContext.citations().isEmpty()) {
-                String noContextNotice = "No relevant code found, answering from general context.\n\n";
-                fullReply.append(noContextNotice);
-                log.info("{} [SSE] sending no-context token sessionId={}", now(), sessionId);
-                emitter.send(SseEmitter.event().name("token").data(noContextNotice));
-            }
-            if (tokens != null) {
-                for (String token : tokens) {
-                    fullReply.append(token);
-                    log.info("{} [SSE] sending token sessionId={} length={}", now(), sessionId, token.length());
-                    emitter.send(SseEmitter.event().name("token").data(token));
-                }
-            }
             if (fullReply.isEmpty()) {
                 fullReply.append("I couldn't generate a reply. Please try again.");
                 log.info("{} [SSE] sending fallback token sessionId={}", now(), sessionId);
-                emitter.send(SseEmitter.event().name("token").data(fullReply.toString()));
+                safeSend(emitter, sseLock, SseEmitter.event().name("token").data(fullReply.toString()));
             }
+
+            boolean usedFallback = !"Groq".equals(successfulProvider) || !models.isEmpty() && !successfulModel.equals(models.get(0));
+            safeSend(emitter, sseLock, SseEmitter.event().name("model").data(Map.of("model", successfulModel,
+                    "provider", successfulProvider, "fallback", usedFallback)));
 
             ChatMessage assistant = chatMessageRepository.save(ChatMessage.builder()
                     .sessionId(sessionId)
@@ -256,38 +398,87 @@ public class ChatStreamHandler {
                     .content(fullReply.toString())
                     .citations(citationMapper.toJson(retrievedContext.citations()))
                     .build());
-            boolean usedFallback = !"Groq".equals(successfulProvider) || !models.isEmpty() && !successfulModel.equals(models.get(0));
-            emitter.send(SseEmitter.event().name("model").data(Map.of("model", successfulModel,
-                    "provider", successfulProvider, "fallback", usedFallback)));
+            if (anyTokenSent.get() && !fullReply.isEmpty()) {
+                putCachedQaAnswer(qaCacheKey, new CachedQaAnswer(
+                        fullReply.toString(),
+                        List.copyOf(retrievedContext.citations()),
+                        successfulModel,
+                        successfulProvider,
+                        usedFallback,
+                        System.currentTimeMillis()));
+            }
             log.info("{} [SSE] sending assistant_message sessionId={}", now(), sessionId);
-            emitter.send(SseEmitter.event().name("assistant_message").data(toMessageResponse(assistant)));
-            sendDone(emitter, terminalSent, sessionId);
+            safeSend(emitter, sseLock, SseEmitter.event().name("assistant_message").data(toMessageResponse(assistant)));
+            sendDone(emitter, sseLock, terminalSent, sessionId);
         } catch (Exception error) {
             Throwable cause = error instanceof ExecutionException && error.getCause() != null
                     ? error.getCause() : error;
             log.error("{} [{}] error sessionId={} type={}", now(), stage.get(), sessionId,
                     cause.getClass().getSimpleName(), cause);
             if (cause instanceof ProviderStreamException providerError) {
-                sendError(emitter, terminalSent, providerError);
+                sendError(emitter, sseLock, terminalSent, providerError);
             } else {
-                sendError(emitter, terminalSent, errorMessage(cause));
+                sendError(emitter, sseLock, terminalSent, errorMessage(cause));
             }
         } finally {
+            heartbeat.cancel(false);
             if (!terminalSent.get()) {
-                sendError(emitter, terminalSent, "Chat ended without a terminal event. Please try again.");
+                sendError(emitter, sseLock, terminalSent, "Chat ended without a terminal event. Please try again.");
             }
         }
     }
 
-    private void sendDone(SseEmitter emitter, AtomicBoolean terminalSent, UUID sessionId) throws Exception {
+    private void emitToken(
+            SseEmitter emitter,
+            Object sseLock,
+            ScheduledFuture<?> heartbeat,
+            StringBuilder fullReply,
+            AtomicBoolean anyTokenSent,
+            AtomicInteger tokenCount,
+            AtomicLong firstTokenMs,
+            boolean noRelevantCode,
+            UUID sessionId,
+            long requestStartMs,
+            String token) {
+        if (token == null || token.isEmpty()) {
+            return;
+        }
+        try {
+            if (anyTokenSent.compareAndSet(false, true)) {
+                heartbeat.cancel(false);
+                firstTokenMs.set(System.currentTimeMillis() - requestStartMs);
+                if (noRelevantCode) {
+                    String noContextNotice = "No relevant code found, answering from general context.\n\n";
+                    fullReply.append(noContextNotice);
+                    safeSend(emitter, sseLock, SseEmitter.event().name("token").data(noContextNotice));
+                }
+            }
+            fullReply.append(token);
+            tokenCount.incrementAndGet();
+            log.debug("{} [SSE] streaming token sessionId={} length={}", now(), sessionId, token.length());
+            safeSend(emitter, sseLock, SseEmitter.event().name("token").data(token));
+        } catch (IOException ioEx) {
+            throw new UncheckedIOException("Failed to stream SSE token", ioEx);
+        }
+    }
+
+    private static void safeSend(SseEmitter emitter, Object sseLock, SseEmitter.SseEventBuilder event) throws IOException {
+        synchronized (sseLock) {
+            emitter.send(event);
+        }
+    }
+
+    private void sendDone(SseEmitter emitter, Object sseLock, AtomicBoolean terminalSent, UUID sessionId) throws Exception {
         if (!terminalSent.compareAndSet(false, true)) {
             return;
         }
         try {
             log.info("{} [SSE] sending done sessionId={}", now(), sessionId);
-            emitter.send(SseEmitter.event().name("done").data("[DONE]"));
+            synchronized (sseLock) {
+                emitter.send(SseEmitter.event().name("done").data("[DONE]"));
+                emitter.complete();
+            }
             log.info("{} [SSE] sent assistant done sessionId={}", now(), sessionId);
-            emitter.complete();
         } catch (Exception error) {
             log.error("{} [SSE] failed to send done sessionId={}", now(), sessionId, error);
             emitter.completeWithError(error);
@@ -295,7 +486,7 @@ public class ChatStreamHandler {
         }
     }
 
-    private void sendError(SseEmitter emitter, AtomicBoolean terminalSent, String message) {
+    private void sendError(SseEmitter emitter, Object sseLock, AtomicBoolean terminalSent, String message) {
         if (!terminalSent.compareAndSet(false, true)) {
             return;
         }
@@ -305,15 +496,50 @@ public class ChatStreamHandler {
         }
         try {
             log.info("{} [SSE] sending error message={}", now(), safeMessage);
-            emitter.send(SseEmitter.event().name("error")
-                    .data(Map.of("type", "error", "message", safeMessage), MediaType.APPLICATION_JSON));
-            emitter.send(SseEmitter.event().name("done").data("[DONE]"));
+            synchronized (sseLock) {
+                emitter.send(SseEmitter.event().name("error")
+                        .data(Map.of("type", "error", "message", safeMessage), MediaType.APPLICATION_JSON));
+                emitter.send(SseEmitter.event().name("done").data("[DONE]"));
+                emitter.complete();
+            }
             log.info("{} [SSE] sent error done message={}", now(), safeMessage);
-            emitter.complete();
         } catch (Exception sendError) {
             log.error("{} [SSE] failed to send terminal error", now(), sendError);
             emitter.completeWithError(sendError);
         }
+    }
+
+    private void sendError(SseEmitter emitter, Object sseLock, AtomicBoolean terminalSent, ProviderStreamException error) {
+        if (!terminalSent.compareAndSet(false, true)) return;
+        Map<String, Object> payload = new java.util.HashMap<>();
+        payload.put("type", "error"); payload.put("code", error.code); payload.put("model", error.model);
+        payload.put("triedModels", error.triedModels); payload.put("message", error.getMessage());
+        if (error.retryAfter != null) payload.put("retryAfter", error.retryAfter);
+        if (error.retryAfterSeconds > 0) payload.put("retryAfterSeconds", error.retryAfterSeconds);
+        try {
+            log.info("{} [SSE] sent assistant error code={} model={}", now(), error.code, error.model);
+            synchronized (sseLock) {
+                emitter.send(SseEmitter.event().name("error").data(payload, MediaType.APPLICATION_JSON));
+                emitter.send(SseEmitter.event().name("done").data("[DONE]"));
+                emitter.complete();
+            }
+        } catch (Exception sendError) { emitter.completeWithError(sendError); }
+    }
+
+    private boolean isModelInCooldown(String model) {
+        Long until = modelCooldownUntil.get(model);
+        if (until == null) {
+            return false;
+        }
+        if (System.currentTimeMillis() < until) {
+            return true;
+        }
+        modelCooldownUntil.remove(model, until);
+        return false;
+    }
+
+    private void putModelCooldown(String model, long durationMs) {
+        modelCooldownUntil.put(model, System.currentTimeMillis() + durationMs);
     }
 
     private void cancelTask(Future<?> task) {
@@ -361,21 +587,6 @@ public class ChatStreamHandler {
         return separator >= 0 ? model.substring(separator + 1) : model;
     }
 
-    private void sendError(SseEmitter emitter, AtomicBoolean terminalSent, ProviderStreamException error) {
-        if (!terminalSent.compareAndSet(false, true)) return;
-        Map<String, Object> payload = new java.util.HashMap<>();
-        payload.put("type", "error"); payload.put("code", error.code); payload.put("model", error.model);
-        payload.put("triedModels", error.triedModels); payload.put("message", error.getMessage());
-        if (error.retryAfter != null) payload.put("retryAfter", error.retryAfter);
-        if (error.retryAfterSeconds > 0) payload.put("retryAfterSeconds", error.retryAfterSeconds);
-        try {
-            log.info("{} [SSE] sent assistant error code={} model={}", now(), error.code, error.model);
-            emitter.send(SseEmitter.event().name("error").data(payload, MediaType.APPLICATION_JSON));
-            emitter.send(SseEmitter.event().name("done").data("[DONE]"));
-            emitter.complete();
-        } catch (Exception sendError) { emitter.completeWithError(sendError); }
-    }
-
     private static final class ProviderStreamException extends RuntimeException {
         final String code, model, retryAfter;
         final List<String> triedModels;
@@ -396,4 +607,32 @@ public class ChatStreamHandler {
     private static String now() {
         return Instant.now().toString();
     }
+
+    private static String buildQaCacheKey(UUID repoId, String repoVersion, String question) {
+        String normalized = question == null ? "" : question.trim().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
+        return repoId + ":" + (repoVersion == null ? "v0" : repoVersion) + ":" + normalized;
+    }
+
+    private CachedQaAnswer getCachedQaAnswer(String key) {
+        CachedQaAnswer entry = qaCache.get(key);
+        if (entry != null) {
+            if (System.currentTimeMillis() - entry.timestamp < QA_CACHE_TTL_MS) {
+                return entry;
+            }
+            qaCache.remove(key);
+        }
+        return null;
+    }
+
+    private void putCachedQaAnswer(String key, CachedQaAnswer value) {
+        qaCache.put(key, value);
+    }
+
+    private record CachedQaAnswer(
+            String answer,
+            List<CitationDto> citations,
+            String model,
+            String provider,
+            boolean usedFallback,
+            long timestamp) {}
 }
