@@ -23,31 +23,27 @@ export function DevPilotIcon({
       {...props}
     >
       <rect
-        width="64"
-        height="64"
-        rx="15"
-        fill={mono ? "currentColor" : "#0D9488"}
+        x="1.5"
+        y="1.5"
+        width="61"
+        height="61"
+        rx="2"
+        fill={mono ? "currentColor" : "var(--background)"}
+        stroke="currentColor"
+        strokeWidth="2"
       />
       <path
-        d="M22 30l7 7-7 7"
-        stroke={mono ? "var(--background)" : "#FFFFFF"}
-        strokeWidth="3.25"
-        strokeLinecap="round"
-        strokeLinejoin="round"
+        d="M18 24l11 8-11 8"
+        stroke={mono ? "var(--background)" : "currentColor"}
+        strokeWidth="3"
+        strokeLinecap="square"
+        strokeLinejoin="miter"
       />
       <path
-        d="M33 44h15"
-        stroke={mono ? "var(--background)" : "#FFFFFF"}
-        strokeWidth="3.25"
-        strokeLinecap="round"
-      />
-      <rect
-        x="47"
-        y="42.25"
-        width="3"
-        height="3.5"
-        rx="0.75"
-        fill={mono ? "var(--background)" : "#FFFFFF"}
+        d="M34 40h13"
+        stroke={mono ? "var(--background)" : "currentColor"}
+        strokeWidth="3"
+        strokeLinecap="square"
       />
     </svg>
   );

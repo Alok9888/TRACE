@@ -32,14 +32,26 @@ export const ChatSidebar = memo(function ChatSidebar({
   const reindex = useStartIndexing();
 
   return (
-    <aside className="flex w-full flex-col border-b md:w-72 md:border-r md:border-b-0">
-      <div className="space-y-3 p-4">
-        <div className="space-y-1">
-          <p className="truncate text-sm font-medium">{repo.fullName}</p>
-          <div className="flex flex-wrap items-center gap-2">
+    <aside className="flex w-full flex-col border-b border-border bg-sidebar md:w-72 md:border-r md:border-b-0">
+      <div className="space-y-3.5 p-4">
+        <div className="space-y-1.5">
+          <p className="font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+            TARGET REPOSITORY
+          </p>
+          <p className="truncate font-heading text-sm font-semibold tracking-[0.06em]">
+            {repo.fullName}
+          </p>
+          <div className="flex flex-wrap items-center gap-2 pt-0.5">
             <IndexStatusBadge status={repo.indexStatus} />
+            {repo.chunkCount > 0 && (
+              <span className="tabular-telemetry font-mono text-[10px] tracking-[0.1em] text-muted-foreground uppercase">
+                {repo.chunkCount.toLocaleString()} VECTORS
+              </span>
+            )}
             {repo.isPrivate && (
-              <span className="text-xs text-muted-foreground">Private</span>
+              <span className="font-mono text-[10px] tracking-[0.12em] text-muted-foreground uppercase">
+                PRIVATE
+              </span>
             )}
           </div>
         </div>
@@ -56,7 +68,7 @@ export const ChatSidebar = memo(function ChatSidebar({
             }
           >
             <Plus data-icon="inline-start" />
-            New chat
+            New Channel
           </Button>
           <Button
             size="sm"
@@ -65,28 +77,28 @@ export const ChatSidebar = memo(function ChatSidebar({
             onClick={() => reindex.mutate(repo.id)}
             aria-label="Re-index repository"
           >
-            <RotateCcw />
+            <RotateCcw className="size-3.5" />
           </Button>
         </div>
       </div>
 
       <Separator />
 
-      <div className="px-4 py-2 text-xs font-medium text-muted-foreground">
-        Sessions
+      <div className="px-4 py-2.5 font-mono text-[10px] font-medium tracking-[0.18em] text-muted-foreground uppercase">
+        Comms Logs
       </div>
 
       <ScrollArea className="flex-1">
         <div className="space-y-1 px-2 pb-4">
           {!ready && (
-            <p className="px-2 text-xs text-muted-foreground">
-              Sessions unlock after indexing completes.
+            <p className="px-2 font-mono text-[11px] text-muted-foreground">
+              Channels unlock once indexing completes.
             </p>
           )}
 
           {sessionsQuery.isLoading &&
             Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton key={i} className="h-12 rounded-xl" />
+              <Skeleton key={i} className="h-12 rounded-[2px]" />
             ))}
 
           {sessionsQuery.data?.map((session) => (
@@ -95,12 +107,14 @@ export const ChatSidebar = memo(function ChatSidebar({
               type="button"
               onClick={() => onSelectSession(session.id)}
               className={cn(
-                "w-full rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-muted",
-                sessionId === session.id && "bg-muted"
+                "w-full rounded-[2px] border-l-2 px-3 py-2.5 text-left transition-colors",
+                sessionId === session.id
+                  ? "border-l-foreground bg-accent text-foreground"
+                  : "border-l-transparent text-muted-foreground hover:bg-accent/50 hover:text-foreground"
               )}
             >
-              <p className="truncate text-sm font-medium">{session.title}</p>
-              <p className="text-xs text-muted-foreground">
+              <p className="truncate text-xs font-medium">{session.title}</p>
+              <p className="mt-0.5 font-mono text-[10px] tracking-[0.06em] text-muted-foreground uppercase">
                 {formatDistanceToNow(new Date(session.createdAt), {
                   addSuffix: true,
                 })}
@@ -109,8 +123,8 @@ export const ChatSidebar = memo(function ChatSidebar({
           ))}
 
           {ready && sessionsQuery.isSuccess && sessionsQuery.data.length === 0 && (
-            <p className="px-2 text-xs text-muted-foreground">
-              No chats yet. Start one to begin.
+            <p className="px-2 font-mono text-[11px] text-muted-foreground">
+              No active logs. Open a channel to begin.
             </p>
           )}
         </div>

@@ -77,27 +77,34 @@ export function AddRepoDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="rounded-[2px] border-border bg-card sm:max-w-md">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle>Add New Repository</DialogTitle>
-            <DialogDescription>
-              Enter a GitHub repository URL to analyze and chat with its code.
+            <DialogTitle className="font-heading text-sm font-semibold tracking-[0.16em] uppercase">
+              Initiate Repository Ingest
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Supply a public GitHub URL to vectorize its source tree and open a comms channel.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-4 py-4">
+          <div className="grid gap-4 py-5">
             <div className="grid gap-2">
-              <Label htmlFor="repo-url">GitHub Repository URL</Label>
+              <Label
+                htmlFor="repo-url"
+                className="font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase"
+              >
+                GitHub Repository URL
+              </Label>
               <div className="relative">
-                <GitBranch className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <GitBranch className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   id="repo-url"
                   type="url"
                   placeholder="https://github.com/owner/repo"
                   value={repoUrl}
                   onChange={(e) => setRepoUrl(e.target.value)}
-                  className="pl-10"
+                  className="h-10 rounded-[2px] border-input bg-background pl-9 font-mono text-xs"
                   required
                 />
               </div>
@@ -109,8 +116,8 @@ export function AddRepoDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={!repoUrl.trim()}>
-              <ArrowRight className="mr-2 h-4 w-4" />
               Analyze
+              <ArrowRight className="ml-1.5 size-3.5" />
             </Button>
           </DialogFooter>
         </form>

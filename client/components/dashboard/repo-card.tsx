@@ -65,56 +65,62 @@ export function RepoCard({ repo }: { repo: Repository }) {
     <article
       onMouseEnter={prefetchChat}
       className={cn(
-        "group flex flex-col overflow-hidden rounded-2xl border border-dashed bg-card/80 shadow-md shadow-foreground/5 transition-all",
+        "group flex flex-col overflow-hidden rounded-[2px] border bg-card/90 transition-colors duration-150",
         isFailed
-          ? "border-destructive/30 bg-destructive/2 hover:border-destructive/40"
-          : "border-border/80 hover:-translate-y-0.5 hover:border-foreground/15 hover:shadow-lg hover:shadow-foreground/10"
+          ? "border-destructive/40 hover:border-destructive/70"
+          : "border-border hover:border-foreground/40"
       )}
     >
-      <div className="border-b border-dashed border-border/70 p-4">
+      <div className="border-b border-border/80 px-4 py-3.5">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
-            <LanguageBadge language={repo.language} showLabel={false} />
+            <div className="mt-0.5 opacity-80 grayscale">
+              <LanguageBadge language={repo.language} showLabel={false} />
+            </div>
             <div className="min-w-0">
-              <p className="truncate text-xs text-muted-foreground">
+              <p className="truncate font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
                 {repo.owner}
               </p>
-              <h3 className="truncate font-medium">{repo.name}</h3>
+              <h3 className="truncate font-heading text-base font-semibold tracking-[0.04em]">
+                {repo.name}
+              </h3>
             </div>
           </div>
           <IndexStatusBadge status={repo.indexStatus} />
         </div>
       </div>
 
-      <div className="flex flex-1 flex-col gap-3 p-4">
+      <div className="flex flex-1 flex-col gap-4 p-4">
         {!isFailed && (
-          <p className="line-clamp-2 min-h-10 text-sm text-muted-foreground">
-            {repo.description || "No description provided."}
+          <p className="line-clamp-2 min-h-10 text-xs leading-relaxed text-muted-foreground">
+            {repo.description || "No repository specification provided."}
           </p>
         )}
 
         {isFailed && repo.description && (
-          <p className="line-clamp-1 text-sm text-muted-foreground">
+          <p className="line-clamp-1 text-xs text-muted-foreground">
             {repo.description}
           </p>
         )}
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px] tracking-[0.08em] text-muted-foreground uppercase">
           {repo.isPrivate && (
-            <span className="inline-flex items-center gap-1 rounded-full border border-dashed px-2 py-0.5 text-xs text-muted-foreground">
-              <Lock className="size-3" />
+            <span className="inline-flex items-center gap-1 rounded-[2px] border border-border px-2 py-0.5">
+              <Lock className="size-2.5" />
               Private
             </span>
           )}
 
-          <span className="inline-flex items-center gap-1 rounded-full border border-dashed px-2 py-0.5 text-xs text-muted-foreground">
-            <GitBranch className="size-3" />
+          <span className="inline-flex items-center gap-1 rounded-[2px] border border-border px-2 py-0.5">
+            <GitBranch className="size-2.5" />
             {repo.defaultBranch}
           </span>
 
           {repo.language && (
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-dashed px-2 py-0.5 text-xs">
-              <LanguageIcon language={repo.language} size="sm" />
+            <span className="inline-flex items-center gap-1.5 rounded-[2px] border border-border px-2 py-0.5 text-foreground/85">
+              <span className="grayscale">
+                <LanguageIcon language={repo.language} size="sm" />
+              </span>
               {repo.language}
             </span>
           )}
@@ -122,27 +128,26 @@ export function RepoCard({ repo }: { repo: Repository }) {
           {repo.chunkCount > 0 && (
             <span
               className={cn(
-                "rounded-full border border-dashed px-2 py-0.5 text-xs",
+                "tabular-telemetry rounded-[2px] border px-2 py-0.5",
                 isFailed
-                  ? "border-destructive/20 text-destructive/80"
-                  : "text-muted-foreground"
+                  ? "border-destructive/30 text-destructive/80"
+                  : "border-border text-muted-foreground"
               )}
             >
               {repo.chunkCount.toLocaleString()} chunks
-              {isFailed ? " indexed" : ""}
             </span>
           )}
         </div>
 
         {isIndexing && (
-          <div className="space-y-2 rounded-xl border border-dashed bg-muted/30 p-3">
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>Indexing…</span>
+          <div className="space-y-2 border border-border bg-background/60 p-3">
+            <div className="tabular-telemetry flex items-center justify-between font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+              <span>Syncing</span>
               <span>
-                {repo.filesProcessed}/{repo.filesTotal || "?"}
+                {repo.filesProcessed}/{repo.filesTotal || "--"}
               </span>
             </div>
-            <Progress value={progress || 8} />
+            <Progress value={progress || 8} className="h-[2px] rounded-none" />
           </div>
         )}
 
@@ -151,7 +156,7 @@ export function RepoCard({ repo }: { repo: Repository }) {
         )}
       </div>
 
-      <div className="mt-auto flex items-center justify-between gap-2 border-t border-dashed border-border/70 p-4">
+      <div className="mt-auto flex items-center justify-between gap-2 border-t border-border/80 bg-background/40 px-4 py-3">
         {repo.htmlUrl ? (
           <Button
             nativeButton={false}
@@ -166,7 +171,7 @@ export function RepoCard({ repo }: { repo: Repository }) {
             }
           >
             <ExternalLink data-icon="inline-start" />
-            GitHub
+            Source
           </Button>
         ) : (
           <span />
@@ -174,9 +179,9 @@ export function RepoCard({ repo }: { repo: Repository }) {
 
         <div className="flex gap-2">
           {repo.indexStatus === "READY" && (
-            <Button variant="secondary" size="sm" onClick={openChat}>
+            <Button variant="outline" size="sm" onClick={openChat}>
               <MessageSquare data-icon="inline-start" />
-              Chat
+              Comms
             </Button>
           )}
 
@@ -185,7 +190,7 @@ export function RepoCard({ repo }: { repo: Repository }) {
             variant={isFailed ? "outline" : "default"}
             className={cn(
               isFailed &&
-                "border-destructive/30 text-destructive hover:bg-destructive/10"
+                "border-destructive/40 text-destructive hover:border-destructive hover:bg-destructive hover:text-white"
             )}
             disabled={isIndexing}
             onClick={handlePrimary}
@@ -193,7 +198,7 @@ export function RepoCard({ repo }: { repo: Repository }) {
             {isIndexing ? (
               <>
                 <Spinner data-icon="inline-start" />
-                Indexing
+                Syncing
               </>
             ) : repo.indexStatus === "READY" ? (
               <>

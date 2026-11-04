@@ -5,10 +5,13 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Executor;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.document.Document;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.pgvector.PgVectorStore;
@@ -26,6 +29,7 @@ import devPilot.backend.services.embedding.CloudflareEmbeddingService;
 public class EmbeddingConfig {
     private static final Logger log = LoggerFactory.getLogger(EmbeddingConfig.class);
     private static final String VECTOR_TABLE = "devpilot_vectors_cf_384";
+    private static final int EMBEDDING_BATCH_SIZE = 64;
 
     @Bean
     EmbeddingModel cloudflareEmbeddingService(JdbcTemplate jdbcOperations) {
@@ -39,8 +43,29 @@ public class EmbeddingConfig {
             .distanceType(PgDistanceType.COSINE_DISTANCE)
             .indexType(PgIndexType.HNSW)
             .vectorTableName(VECTOR_TABLE)
+            // Bypass Spring AI's default TokenCountBatchingStrategy (8191-token cap splits 64 code chunks into 18-22!)
+            .batchingStrategy(EmbeddingConfig::fixedSizeBatches)
             .initializeSchema(false)
             .build();
+    }
+
+    /**
+     * Groups documents strictly by count (64 per Cloudflare Workers AI request) without running
+     * OpenAI TokenCountBatchingStrategy, which otherwise fragments 64-chunk batches into ~18-22 texts.
+     */
+    public static List<List<Document>> fixedSizeBatches(List<Document> documents) {
+        if (documents == null || documents.isEmpty()) {
+            return List.of();
+        }
+        if (documents.size() <= EMBEDDING_BATCH_SIZE) {
+            return List.of(documents);
+        }
+        List<List<Document>> batches = new ArrayList<>(
+                (documents.size() + EMBEDDING_BATCH_SIZE - 1) / EMBEDDING_BATCH_SIZE);
+        for (int i = 0; i < documents.size(); i += EMBEDDING_BATCH_SIZE) {
+            batches.add(documents.subList(i, Math.min(i + EMBEDDING_BATCH_SIZE, documents.size())));
+        }
+        return batches;
     }
 
     /**

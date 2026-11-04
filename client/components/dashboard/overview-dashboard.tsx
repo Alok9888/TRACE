@@ -38,16 +38,20 @@ function StatCard({
       <CardHeader className="pb-0">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <CardDescription>{label}</CardDescription>
-            <CardTitle className="mt-1 text-2xl font-semibold">{value}</CardTitle>
+            <CardDescription className="font-mono text-[10px] tracking-[0.18em] uppercase">
+              {label}
+            </CardDescription>
+            <CardTitle className="tabular-telemetry mt-2 font-heading text-3xl font-semibold tracking-tight">
+              {value}
+            </CardTitle>
           </div>
-          <div className="rounded-lg bg-muted p-2 text-muted-foreground">
-            <Icon className="size-4" />
+          <div className="border border-border p-2 text-muted-foreground">
+            <Icon className="size-3.5" />
           </div>
         </div>
       </CardHeader>
       {hint ? (
-        <CardContent className="pt-0 text-xs text-muted-foreground">
+        <CardContent className="pt-0 font-mono text-[10px] tracking-[0.1em] text-muted-foreground uppercase">
           {hint}
         </CardContent>
       ) : null}
@@ -131,16 +135,18 @@ export function OverviewDashboard() {
         <section className="space-y-4">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h2 className="font-heading text-lg font-semibold">Recent repositories</h2>
-              <p className="text-sm text-muted-foreground">
-                Jump back into a repo you have indexed recently.
+              <h2 className="font-heading text-sm font-semibold tracking-[0.16em] uppercase">
+                Recent Repositories
+              </h2>
+              <p className="font-mono text-[11px] tracking-[0.06em] text-muted-foreground">
+                Latest indexed targets ready for interrogation.
               </p>
             </div>
             <Link
               href="/dashboard"
-              className="text-sm font-medium text-primary hover:underline"
+              className="font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase transition-colors hover:text-foreground"
             >
-              View all
+              View All →
             </Link>
           </div>
 
@@ -179,35 +185,37 @@ export function OverviewDashboard() {
 
         <section className="space-y-4">
           <div>
-            <h2 className="font-heading text-lg font-semibold">Workspace status</h2>
-            <p className="text-sm text-muted-foreground">
-              A quick snapshot of indexing across your connected repos.
+            <h2 className="font-heading text-sm font-semibold tracking-[0.16em] uppercase">
+              System Status
+            </h2>
+            <p className="font-mono text-[11px] tracking-[0.06em] text-muted-foreground">
+              Real-time indexing telemetry across workspace.
             </p>
           </div>
 
           <Card>
-            <CardContent className="space-y-3 pt-6">
+            <CardContent className="space-y-3.5 pt-5 font-mono text-xs">
               {reposQuery.isLoading ? (
                 Array.from({ length: 4 }).map((_, index) => (
-                  <Skeleton key={index} className="h-8 rounded-lg" />
+                  <Skeleton key={index} className="h-7 rounded-[2px]" />
                 ))
               ) : (
                 <>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-sm text-muted-foreground">Ready</span>
-                    <Badge variant="secondary">{readyCount}</Badge>
+                  <div className="flex items-center justify-between gap-3 border-b border-border/60 pb-2.5">
+                    <span className="tracking-[0.14em] text-muted-foreground uppercase">Online</span>
+                    <Badge variant="outline" className="tabular-telemetry rounded-[2px] font-mono text-[11px]">{readyCount}</Badge>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 border-b border-border/60 pb-2.5">
+                    <span className="tracking-[0.14em] text-muted-foreground uppercase">Syncing</span>
+                    <Badge variant="outline" className="tabular-telemetry rounded-[2px] font-mono text-[11px]">{indexingCount}</Badge>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 border-b border-border/60 pb-2.5">
+                    <span className="tracking-[0.14em] text-muted-foreground uppercase">Standby</span>
+                    <Badge variant="outline" className="tabular-telemetry rounded-[2px] font-mono text-[11px]">{pendingCount}</Badge>
                   </div>
                   <div className="flex items-center justify-between gap-3">
-                    <span className="text-sm text-muted-foreground">Indexing</span>
-                    <Badge variant="secondary">{indexingCount}</Badge>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-sm text-muted-foreground">Pending</span>
-                    <Badge variant="secondary">{pendingCount}</Badge>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-sm text-muted-foreground">Failed</span>
-                    <Badge variant={failedCount > 0 ? "destructive" : "secondary"}>
+                    <span className="tracking-[0.14em] text-muted-foreground uppercase">Fault</span>
+                    <Badge variant={failedCount > 0 ? "destructive" : "outline"} className="tabular-telemetry rounded-[2px] font-mono text-[11px]">
                       {failedCount}
                     </Badge>
                   </div>

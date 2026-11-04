@@ -27,7 +27,7 @@ export function CitationChips({
   if (!citations.length) return null;
 
   return (
-    <div className="flex flex-wrap gap-1.5 pt-1">
+    <div className="flex flex-wrap gap-1.5">
       {citations.map((citation, index) => (
         <Badge
           key={`${citation.filePath}-${index}`}
@@ -39,13 +39,13 @@ export function CitationChips({
               rel="noreferrer"
             />
           }
-          className="max-w-full gap-1 font-normal"
+          className="max-w-full gap-1.5 rounded-[2px] border-border bg-card px-2 py-0.5 font-mono text-[10px] font-normal tracking-[0.04em] text-muted-foreground transition-colors hover:border-foreground hover:bg-foreground hover:text-background"
         >
           <span className="truncate">
             {citation.filePath}
             {citation.startLine != null ? `:${citation.startLine}` : ""}
           </span>
-          <ExternalLink className="size-3 opacity-60" />
+          <ExternalLink className="size-2.5 opacity-60" />
         </Badge>
       ))}
     </div>

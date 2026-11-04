@@ -53,10 +53,10 @@ function FilterPill({
       type="button"
       onClick={onClick}
       className={cn(
-        "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+        "rounded-[2px] border px-2.5 py-1 font-mono text-[10px] font-medium tracking-[0.14em] uppercase transition-colors",
         active
-          ? "border-foreground/20 bg-foreground text-background shadow-sm"
-          : "border-dashed border-border bg-background text-muted-foreground hover:border-foreground/20 hover:text-foreground"
+          ? "border-foreground bg-foreground text-background"
+          : "border-border bg-transparent text-muted-foreground hover:border-foreground/40 hover:text-foreground"
       )}
     >
       {children}
@@ -77,37 +77,36 @@ export function DashboardHeader({
   isSyncing,
 }: DashboardHeaderProps) {
   return (
-    <div className="sticky top-0 z-20 border-b bg-background/85 backdrop-blur-xl">
-      <div className="flex flex-col gap-4 px-4 py-4 md:px-6">
+    <div className="sticky top-0 z-20 border-b border-border bg-background/90 backdrop-blur-md">
+      <div className="flex flex-col gap-4 px-5 py-4 md:px-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-w-0 items-start gap-3">
             <SidebarTrigger className="-ml-1 mt-0.5" />
             <div className="min-w-0">
-              <h1 className="font-heading text-xl font-semibold tracking-tight">
+              <h1 className="font-heading text-lg font-semibold tracking-[0.14em] uppercase">
                 Repositories
               </h1>
-              <p className="text-sm text-muted-foreground">
+              <p className="tabular-telemetry font-mono text-[11px] tracking-[0.12em] text-muted-foreground uppercase">
                 {totalCount != null
-                  ? `${totalCount} connected · ${readyCount ?? 0} ready`
-                  : "Sync and index a repo to start chatting"}
+                  ? `${totalCount} TRACKED // ${readyCount ?? 0} ONLINE`
+                  : "SYNC AND INDEX A REPOSITORY TO INITIATE TELEMETRY"}
               </p>
             </div>
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <div className="relative min-w-[220px] flex-1 sm:min-w-[280px]">
-              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Search className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={search}
                 onChange={(e) => onSearchChange(e.target.value)}
-                placeholder="Search repositories…"
-                className="border-dashed bg-background pl-9 shadow-sm"
+                placeholder="Filter repositories..."
+                className="h-9 rounded-[2px] border-input bg-card pl-9 font-mono text-xs"
               />
             </div>
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
-                className="border-dashed shadow-sm"
                 onClick={onSync}
                 disabled={isSyncing}
               >
@@ -125,9 +124,9 @@ export function DashboardHeader({
         <Separator className="opacity-60" />
 
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="mr-1 text-xs font-medium text-muted-foreground">
-              Visibility
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="mr-2 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+              Scope
             </span>
             {visibilityFilters.map((filter) => (
               <FilterPill
@@ -140,9 +139,9 @@ export function DashboardHeader({
             ))}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="mr-1 text-xs font-medium text-muted-foreground">
-              Status
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="mr-2 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+              State
             </span>
             {statusFilters.map((filter) => (
               <FilterPill

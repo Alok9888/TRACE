@@ -5,13 +5,13 @@ import { cn } from "@/lib/utils";
 export function indexStatusLabel(status: IndexStatus) {
   switch (status) {
     case "READY":
-      return "Ready";
+      return "ONLINE";
     case "INDEXING":
-      return "Indexing";
+      return "SYNCING";
     case "FAILED":
-      return "Failed";
+      return "FAULT";
     default:
-      return "Not indexed";
+      return "STANDBY";
   }
 }
 
@@ -22,19 +22,32 @@ export function IndexStatusBadge({
   status: IndexStatus;
   className?: string;
 }) {
-  const variant =
+  const tone =
     status === "READY"
-      ? "default"
+      ? "border-foreground/35 bg-foreground/[0.06] text-foreground"
       : status === "FAILED"
-        ? "destructive"
+        ? "border-destructive/50 bg-destructive/10 text-destructive"
         : status === "INDEXING"
-          ? "secondary"
-          : "outline";
+          ? "border-foreground/45 bg-transparent text-foreground"
+          : "border-border bg-transparent text-muted-foreground";
 
   return (
-    <Badge variant={variant} className={cn(className)}>
+    <Badge
+      variant="outline"
+      className={cn(
+        "rounded-[2px] px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-[0.14em]",
+        tone,
+        className
+      )}
+    >
+      {status === "READY" && (
+        <span className="mr-1.5 size-1.5 rounded-full bg-foreground" />
+      )}
       {status === "INDEXING" && (
-        <span className="mr-1 size-1.5 animate-pulse rounded-full bg-current" />
+        <span className="mr-1.5 size-1.5 animate-pulse rounded-full bg-foreground" />
+      )}
+      {status === "FAILED" && (
+        <span className="mr-1.5 size-1.5 rounded-full bg-destructive" />
       )}
       {indexStatusLabel(status)}
     </Badge>
@@ -42,16 +55,7 @@ export function IndexStatusBadge({
 }
 
 export function languageColor(language: string | null) {
-  const map: Record<string, string> = {
-    TypeScript: "bg-sky-500",
-    JavaScript: "bg-amber-400",
-    Java: "bg-orange-500",
-    Python: "bg-emerald-500",
-    Go: "bg-cyan-500",
-    Rust: "bg-orange-700",
-    Kotlin: "bg-violet-500",
-  };
-  return map[language ?? ""] ?? "bg-muted-foreground";
+  return language ? "bg-foreground/70" : "bg-muted-foreground/50";
 }
 
 export function RepoMeta({ repo }: { repo: Repository }) {

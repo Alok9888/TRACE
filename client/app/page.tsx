@@ -1,10 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, FolderGit2, MessageSquareCode, Sparkles } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 
-import { DevPilotIcon } from "@/components/icons/devpilot-icon";
 import { BrandMark } from "@/components/layout/app-shell";
 import { ModeToggle } from "@/components/ui/mode-toggle";
 import { Button } from "@/components/ui/button";
@@ -44,79 +44,133 @@ export default function HomePage() {
   }
 
   return (
-    <div className="relative min-h-svh overflow-hidden">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,oklch(from_var(--primary)_l_c_h/0.12),transparent_55%)]" />
-      <header className="relative z-10 mx-auto flex h-14 w-full max-w-5xl items-center justify-between px-4">
-        <BrandMark />
-        <ModeToggle />
+    <div className="relative flex min-h-svh flex-col overflow-hidden bg-background text-foreground">
+      {/* Real monochrome SpaceX night-launch photography — subtle, low-opacity atmospheric backdrop */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden select-none">
+        <img
+          src="/images/spacex-launch-arc.jpg"
+          alt=""
+          aria-hidden="true"
+          className="h-full w-full object-cover object-right-bottom opacity-[0.22] contrast-125 dark:opacity-[0.30] [mask-image:radial-gradient(ellipse_80%_75%_at_75%_55%,black_25%,transparent_100%)]"
+        />
+        <div className="mission-grid absolute inset-0 opacity-60" />
+      </div>
+
+      {/* Top mission bar */}
+      <header className="relative z-10 border-b border-border/80 bg-background/60 backdrop-blur-sm">
+        <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between px-6">
+          <BrandMark />
+          <div className="flex items-center gap-5">
+            <span className="hidden items-center gap-2 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase sm:inline-flex">
+              <span className="size-1.5 rounded-full bg-foreground/80" />
+              SYS // NOMINAL
+            </span>
+            <Link
+              href="/dashboard"
+              className="font-heading text-xs font-semibold tracking-[0.16em] text-muted-foreground uppercase transition-colors hover:text-foreground"
+            >
+              Console
+            </Link>
+            <ModeToggle />
+          </div>
+        </div>
       </header>
 
-      <main className="relative z-10 mx-auto flex w-full max-w-5xl flex-col gap-16 px-4 py-16 md:py-24">
-        <section className="mx-auto max-w-2xl space-y-6 text-center">
-          <div className="mx-auto flex size-14 items-center justify-center rounded-2xl shadow-sm">
-            <DevPilotIcon className="size-14 rounded-2xl" />
-          </div>
-          <div className="space-y-3">
-            <h1 className="font-heading text-4xl font-semibold tracking-tight sm:text-5xl">
-              DevPilot
+      {/* Main asymmetric editorial hero */}
+      <main className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col justify-between px-6 py-16 md:py-24">
+        <section className="max-w-2xl space-y-8 pt-4 md:pt-10">
+          <div className="space-y-4">
+            <p className="font-mono text-[11px] tracking-[0.22em] text-muted-foreground uppercase">
+              00 // CODEBASE TELEMETRY ENGINE
+            </p>
+            <h1 className="font-heading text-4xl leading-[1.02] font-semibold tracking-[0.04em] uppercase sm:text-6xl">
+              Interrogate Any Repository.
             </h1>
-            <p className="text-lg text-muted-foreground text-balance">
-              Paste a public GitHub repository and start chatting with its code
-              using retrieval-augmented answers and citations.
+            <p className="max-w-lg text-sm leading-relaxed text-muted-foreground sm:text-base">
+              Stream public GitHub source trees into vector space and query architecture,
+              execution paths, and symbols with line-level citations.
             </p>
           </div>
-          <div className="mx-auto flex w-full max-w-xl flex-col gap-3 sm:flex-row">
-            <input
-              value={repoUrl}
-              onChange={(event) => setRepoUrl(event.target.value)}
-              onKeyDown={(event) => { if (event.key === "Enter") analyze(); }}
-              placeholder="https://github.com/facebook/react"
-              aria-label="GitHub repository URL"
-              className="h-11 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-            <Button
-              size="lg"
-              onClick={analyze}
-              disabled={!repoUrl.trim()}
-              className={isClicked
-                ? "scale-[0.97] cursor-not-allowed border-primary/70 bg-primary/90 opacity-60 pointer-events-none transition-all duration-150"
-                : "transition-all duration-150 active:scale-95"}
-            >
-              <FolderGit2 className="size-4" />
-              Analyze
-              <ArrowRight className={`size-4 transition-transform duration-150 ${isClicked ? "translate-x-1" : ""}`} />
-            </Button>
+
+          {/* Launch command input bar */}
+          <div className="space-y-3 pt-2">
+            <div className="flex flex-col border border-input bg-background/85 backdrop-blur-sm transition-colors focus-within:border-foreground sm:flex-row">
+              <div className="flex items-center border-b border-border/70 px-3.5 py-2 font-mono text-[11px] tracking-[0.12em] text-muted-foreground uppercase sm:border-r sm:border-b-0">
+                GIT
+              </div>
+              <input
+                value={repoUrl}
+                onChange={(event) => setRepoUrl(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") analyze();
+                }}
+                placeholder="https://github.com/owner/repository"
+                aria-label="GitHub repository URL"
+                className="h-12 min-w-0 flex-1 bg-transparent px-4 font-mono text-xs tracking-wide text-foreground outline-none placeholder:text-muted-foreground/60 sm:text-sm"
+              />
+              <Button
+                size="lg"
+                onClick={analyze}
+                disabled={!repoUrl.trim()}
+                className={`h-12 rounded-none border-0 border-t border-input px-7 sm:border-t-0 sm:border-l ${
+                  isClicked
+                    ? "pointer-events-none opacity-60"
+                    : ""
+                }`}
+              >
+                Analyze
+                <ArrowRight
+                  className={`size-3.5 transition-transform duration-200 ${
+                    isClicked ? "translate-x-1" : "group-hover/button:translate-x-0.5"
+                  }`}
+                />
+              </Button>
+            </div>
+            {error ? (
+              <p
+                role="alert"
+                className="font-mono text-xs tracking-wide text-destructive"
+              >
+                ERR // {error}
+              </p>
+            ) : (
+              <p className="font-mono text-[11px] tracking-[0.12em] text-muted-foreground/80 uppercase">
+                PUBLIC REPOSITORIES · ZERO AUTH REQUIRED · PRESS ENTER TO INITIATE
+              </p>
+            )}
           </div>
-          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         </section>
 
-        <section className="grid gap-4 md:grid-cols-3">
+        {/* Bottom architectural telemetry strip */}
+        <section className="mt-20 grid gap-8 border-t border-border/80 pt-8 md:grid-cols-3">
           {[
             {
-              title: "Connect GitHub",
-              body: "Paste a public GitHub repository URL to get started.",
-              icon: FolderGit2,
+              index: "01",
+              title: "INGEST",
+              body: "Single-pass archive streaming and diff-aware filtering strip build artifacts before chunking.",
             },
             {
-              title: "Index with RAG",
-              body: "Chunk and embed your code into Postgres + pgvector.",
-              icon: Sparkles,
+              index: "02",
+              title: "VECTORIZE",
+              body: "Line-aligned code segments embedded at 384 dimensions and indexed in Postgres + pgvector.",
             },
             {
-              title: "Ask anything",
-              body: "Get grounded answers with clickable source citations.",
-              icon: MessageSquareCode,
+              index: "03",
+              title: "INTERROGATE",
+              body: "Low-latency streaming responses grounded strictly in retrieved source ranges and file links.",
             },
           ].map((item) => (
-            <div
-              key={item.title}
-              className="rounded-2xl border bg-card/80 p-5 shadow-xs backdrop-blur"
-            >
-              <div className="mb-4 flex size-10 items-center justify-center rounded-xl bg-muted">
-                <item.icon className="size-5 text-foreground" />
+            <div key={item.index} className="space-y-2.5">
+              <div className="flex items-center gap-3 font-mono text-[11px] tracking-[0.2em] text-muted-foreground">
+                <span>{item.index}</span>
+                <span className="h-px w-6 bg-border" />
+                <span className="font-heading text-xs font-semibold tracking-[0.18em] text-foreground">
+                  {item.title}
+                </span>
               </div>
-              <h2 className="font-medium">{item.title}</h2>
-              <p className="mt-1.5 text-sm text-muted-foreground">{item.body}</p>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {item.body}
+              </p>
             </div>
           ))}
         </section>

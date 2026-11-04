@@ -216,10 +216,10 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
   // Only show "Loading chat..." when !repo && !initialUrl (direct visit to /chat/<uuid>)
   if (!repo || !sidebarRepo) {
     return (
-      <AppShell title="Loading chat…">
+      <AppShell title="Initializing Console...">
         <div className="grid flex-1 gap-4 p-4 md:grid-cols-[18rem_1fr]">
-          <Skeleton className="min-h-80 rounded-2xl" />
-          <Skeleton className="min-h-80 rounded-2xl" />
+          <Skeleton className="min-h-80 rounded-[2px]" />
+          <Skeleton className="min-h-80 rounded-[2px]" />
         </div>
       </AppShell>
     );
@@ -230,13 +230,13 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
       title={repo.fullName}
       description={
         ready
-          ? "Ask questions grounded in this repository"
-          : "Waiting for indexing to finish"
+          ? "COMMS ONLINE // GROUNDED IN REPOSITORY"
+          : "INGESTION SEQUENCE IN PROGRESS"
       }
       actions={
         <Button variant="outline" size="sm" render={<Link href="/dashboard" />}>
           <ArrowLeft data-icon="inline-start" />
-          Repos
+          Console
         </Button>
       }
     >

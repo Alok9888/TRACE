@@ -19,6 +19,7 @@ import org.springframework.ai.vectorstore.filter.Filter;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import devPilot.backend.config.EmbeddingConfig;
 import devPilot.backend.repository.RepositoryRepository;
 import devPilot.backend.services.ai.CitationMapper;
 import devPilot.backend.services.ai.CodeContextRetriever;
@@ -203,5 +204,30 @@ class RagOptimizationsTest {
         assertFalse(ctx.contextText().contains("const y = 2"), "Low-score chunk below 0.35 must be rejected");
         assertTrue(ctx.contextText().length() <= RagSettings.MAX_CONTEXT_CHARS,
                 "Context must stay within budget: " + ctx.contextText().length());
+    }
+
+    @Test
+    void batchingStrategyPreservesFull64ChunkBatchesWithoutTokenFragmentation() {
+        List<Document> docs64 = new java.util.ArrayList<>(64);
+        String body = "// File: src/app.ts\n" + "export const value = computeSomething(a, b);\n".repeat(35);
+        for (int i = 0; i < 64; i++) {
+            docs64.add(new Document(body));
+        }
+
+        List<List<Document>> singleBatch = EmbeddingConfig.fixedSizeBatches(docs64);
+        assertEquals(1, singleBatch.size(), "64 code chunks must stay in 1 batch (not split into 18-22)");
+        assertEquals(64, singleBatch.get(0).size());
+
+        // Simulate 1934 chunks -> 30 batches of 64 + 1 remainder of 14 = 31 calls
+        List<Document> docs1934 = new java.util.ArrayList<>(1934);
+        for (int i = 0; i < 1934; i++) {
+            docs1934.add(new Document(body));
+        }
+        List<List<Document>> batches = EmbeddingConfig.fixedSizeBatches(docs1934);
+        assertEquals(31, batches.size(), "1934 chunks must produce ceil(1934/64) = 31 batches");
+        for (int i = 0; i < 30; i++) {
+            assertEquals(64, batches.get(i).size());
+        }
+        assertEquals(14, batches.get(30).size());
     }
 }

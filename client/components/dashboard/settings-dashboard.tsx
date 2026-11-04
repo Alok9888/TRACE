@@ -50,49 +50,55 @@ export function SettingsDashboard() {
   };
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 p-4 md:p-6">
+    <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-5 p-5 md:p-6">
       <Card>
         <CardHeader>
-          <CardTitle>Repository access</CardTitle>
-          <CardDescription>
-            DevPilot analyzes public repositories without a GitHub login.
+          <CardTitle className="font-heading text-xs font-semibold tracking-[0.18em] uppercase">
+            01 // Repository Access
+          </CardTitle>
+          <CardDescription className="text-xs">
+            Public GitHub repository interrogation with zero OAuth overhead.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            Only public repositories are supported. Paste a repository URL on
-            the home page to index it and start a chat.
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Only public repositories are supported. Provide a repository URL on
+            the launch console to stream, vectorize, and open a comms channel.
           </p>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>Workspace</CardTitle>
-          <CardDescription>
-            Your unique workspace ID. Used for privacy across repositories.
+          <CardTitle className="font-heading text-xs font-semibold tracking-[0.18em] uppercase">
+            02 // Workspace Telemetry ID
+          </CardTitle>
+          <CardDescription className="text-xs">
+            Unique local workspace identifier isolating your indexed repositories.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 border border-border bg-background/60 px-3.5 py-2.5">
             <div className="flex-1">
-              <Label>Workspace ID</Label>
-              <p className="text-sm text-muted-foreground break-all">
-                {workspaceId || "Loading workspace ID…"}
+              <Label className="font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase">
+                Workspace ID
+              </Label>
+              <p className="mt-0.5 font-mono text-xs break-all text-foreground">
+                {workspaceId || "INITIALIZING..."}
               </p>
             </div>
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
               onClick={copyWorkspaceId}
-              className="gap-2"
+              className="gap-1.5"
             >
               {copied ? (
-                <Check className="size-4" />
+                <Check className="size-3.5" />
               ) : (
-                <Copy className="size-4" />
+                <Copy className="size-3.5" />
               )}
-              {copied ? "Copied!" : "Copy"}
+              {copied ? "Copied" : "Copy"}
             </Button>
           </div>
         </CardContent>
@@ -100,21 +106,25 @@ export function SettingsDashboard() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Appearance</CardTitle>
-          <CardDescription>
-            Customize how DevPilot looks on your device.
+          <CardTitle className="font-heading text-xs font-semibold tracking-[0.18em] uppercase">
+            03 // Display Mode
+          </CardTitle>
+          <CardDescription className="text-xs">
+            Configure console contrast polarity.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between gap-4">
             <div className="space-y-1">
-              <Label htmlFor="dark-mode">Dark mode</Label>
-              <p className="text-sm text-muted-foreground">
-                Switch between light and dark themes.
+              <Label htmlFor="dark-mode" className="text-xs font-medium uppercase tracking-[0.1em]">
+                Dark Telemetry Mode
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Obsidian mission-control polarity (recommended).
               </p>
             </div>
             <div className="flex items-center gap-3">
-              <Sun className="size-4 text-muted-foreground" />
+              <Sun className="size-3.5 text-muted-foreground" />
               <Switch
                 id="dark-mode"
                 checked={isDark}
@@ -122,7 +132,7 @@ export function SettingsDashboard() {
                   setTheme(checked ? "dark" : "light")
                 }
               />
-              <Moon className="size-4 text-muted-foreground" />
+              <Moon className="size-3.5 text-muted-foreground" />
             </div>
           </div>
 
@@ -130,16 +140,17 @@ export function SettingsDashboard() {
 
           <div className="flex items-center justify-between gap-4">
             <div className="space-y-1">
-              <Label>Theme selector</Label>
-              <p className="text-sm text-muted-foreground">
-                Current theme: {theme ?? "system"}
+              <Label className="text-xs font-medium uppercase tracking-[0.1em]">
+                Active Polarity
+              </Label>
+              <p className="font-mono text-[11px] tracking-[0.1em] text-muted-foreground uppercase">
+                {theme ?? "dark"}
               </p>
             </div>
             <ModeToggle />
           </div>
         </CardContent>
       </Card>
-
     </div>
   );
 }

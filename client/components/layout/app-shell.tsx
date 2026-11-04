@@ -53,20 +53,23 @@ export function AppShell({
 
   return (
     <SidebarProvider>
-      <Sidebar variant="inset" collapsible="icon">
-        <SidebarHeader>
+      <Sidebar variant="inset" collapsible="icon" className="border-r border-sidebar-border">
+        <SidebarHeader className="border-b border-sidebar-border/80 py-3">
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
                 size="lg"
                 render={<Link href="/dashboard" />}
-                tooltip="DevPilot"
+                tooltip="DEVPILOT"
+                className="rounded-[2px]"
               >
-                <DevPilotIcon className="size-8 rounded-[10px]" />
-                <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">DevPilot</span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    Chat with your code
+                <DevPilotIcon className="size-7" />
+                <div className="grid flex-1 text-left leading-tight">
+                  <span className="truncate font-heading text-xs font-semibold tracking-[0.22em] uppercase">
+                    DevPilot
+                  </span>
+                  <span className="truncate font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+                    Mission Control
                   </span>
                 </div>
               </SidebarMenuButton>
@@ -77,7 +80,9 @@ export function AppShell({
         <SidebarContent>
           {dashboardNavGroups.map((group) => (
             <SidebarGroup key={group.label}>
-              <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+              <SidebarGroupLabel className="font-mono text-[10px] tracking-[0.2em] text-muted-foreground/80 uppercase">
+                {group.label}
+              </SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
                   {group.items.map((item) => (
@@ -90,8 +95,9 @@ export function AppShell({
                         )}
                         tooltip={item.title}
                         render={<Link href={item.href} />}
+                        className="rounded-[2px] font-heading text-xs font-medium tracking-[0.1em] uppercase"
                       >
-                        <item.icon />
+                        <item.icon className="size-3.5" />
                         <span>{item.title}</span>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
@@ -99,14 +105,14 @@ export function AppShell({
                 </SidebarMenu>
                 {/* Add New Repository button - only shown in Workspace group */}
                 {group.label === "Workspace" && showAddRepoButton && (
-                  <SidebarMenuItem>
+                  <SidebarMenuItem className="mt-2">
                     <SidebarMenuButton
                       variant="outline"
-                      className="justify-start gap-2 border-dashed"
+                      className="justify-start gap-2 rounded-[2px] border border-border bg-transparent font-heading text-xs font-medium tracking-[0.12em] uppercase hover:border-foreground hover:bg-foreground hover:text-background"
                       isActive={false}
                       onClick={() => setAddRepoDialogOpen(true)}
                     >
-                      <Plus className="h-4 w-4" />
+                      <Plus className="size-3.5" />
                       <span>Add Repository</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
@@ -116,32 +122,35 @@ export function AppShell({
           ))}
         </SidebarContent>
 
-        <SidebarFooter>
+        <SidebarFooter className="border-t border-sidebar-border/80">
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton render={<Link href="/" />}>
-                <DevPilotIcon className="size-5 rounded" />
-                <span>Analyze a repository</span>
+              <SidebarMenuButton
+                render={<Link href="/" />}
+                className="rounded-[2px] font-mono text-[11px] tracking-[0.12em] text-muted-foreground uppercase hover:text-foreground"
+              >
+                <DevPilotIcon className="size-4" />
+                <span>Launch Console</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
         </SidebarFooter>
       </Sidebar>
 
-      <SidebarInset>
+      <SidebarInset className="bg-background">
         {!hideHeader && (
-          <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-2 border-b bg-background/80 px-4 backdrop-blur">
+          <header className="sticky top-0 z-20 flex h-13 shrink-0 items-center gap-2 border-b border-border bg-background/85 px-4 backdrop-blur-md">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
             <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
               <div className="min-w-0">
                 {title && (
-                  <h1 className="truncate font-heading text-sm font-medium">
+                  <h1 className="truncate font-heading text-xs font-semibold tracking-[0.16em] uppercase">
                     {title}
                   </h1>
                 )}
                 {description && (
-                  <p className="truncate text-xs text-muted-foreground">
+                  <p className="truncate font-mono text-[10px] tracking-[0.08em] text-muted-foreground uppercase">
                     {description}
                   </p>
                 )}
@@ -166,12 +175,14 @@ export function BrandMark({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        "flex items-center gap-2.5 font-semibold tracking-tight",
+        "flex items-center gap-3 font-semibold tracking-tight",
         className
       )}
     >
-      <DevPilotIcon className="size-8 rounded-[10px]" />
-      <span className="font-heading text-[1.05rem] leading-none">DevPilot</span>
+      <DevPilotIcon className="size-7" />
+      <span className="font-heading text-sm font-semibold tracking-[0.24em] uppercase leading-none">
+        DevPilot
+      </span>
     </div>
   );
 }
