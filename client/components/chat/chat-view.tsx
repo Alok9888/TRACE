@@ -56,6 +56,19 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
     : statusIndex ?? repositoryIndex;
   const ready = indexStatus === "READY";
 
+  // When status polling finishes (READY/FAILED) — e.g. while user was in another tab — sync repo detail immediately
+  useEffect(() => {
+    if (!effectiveRepoId) return;
+    if (
+      (statusIndex === "READY" || statusIndex === "FAILED") &&
+      (!repoQuery.data || repoQuery.data.indexStatus !== statusIndex) &&
+      !repoQuery.isFetching &&
+      !repoQuery.isError
+    ) {
+      void repoQuery.refetch();
+    }
+  }, [effectiveRepoId, statusIndex, repoQuery]);
+
   // Fetch chat sessions in parallel with repo detail as soon as effectiveRepoId is known (breaks serial waterfall)
   const sessionsQuery = useChatSessions(effectiveRepoId, Boolean(effectiveRepoId));
   const createSession = useCreateChatSession(effectiveRepoId);
@@ -109,47 +122,60 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
     createSession,
   ]);
 
+  const repo = repoQuery.data;
+
+  // Must remain BEFORE any early returns to satisfy React Rules of Hooks!
+  // Stabilizes merged repo prop so 60fps streaming updates never re-render memoized ChatSidebar.
+  const sidebarRepo = useMemo(() => {
+    if (!repo) return null;
+    return {
+      ...repo,
+      indexStatus: indexStatus ?? repo.indexStatus,
+      filesProcessed: statusQuery.data?.filesProcessed ?? repo.filesProcessed,
+      filesTotal: statusQuery.data?.filesTotal ?? repo.filesTotal,
+      chunkCount: statusQuery.data?.chunkCount ?? repo.chunkCount,
+      errorMessage: statusQuery.data?.errorMessage ?? repo.errorMessage,
+    };
+  }, [
+    repo,
+    indexStatus,
+    statusQuery.data?.filesProcessed,
+    statusQuery.data?.filesTotal,
+    statusQuery.data?.chunkCount,
+    statusQuery.data?.errorMessage,
+  ]);
+
   // Calculate values based on stage for proper progress
   const urlStatus = statusQuery.data;
 
   // Calculate files/total for progress based on source
-  const filesTotal = (initialUrl && !effectiveRepoId) ?
-    (urlStatus?.filesTotal ?? 0) :
-    (repoQuery.data?.filesTotal ?? 0);
-  const filesProcessed = (initialUrl && !effectiveRepoId) ?
-    (urlStatus?.filesProcessed ?? 0) :
-    (repoQuery.data?.filesProcessed ?? 0);
-  const chunksTotal = (initialUrl && !effectiveRepoId) ?
-    (urlStatus?.chunksTotal ?? 0) :
-    (repoQuery.data?.chunkCount ?? 0);
-  const chunksProcessed = (initialUrl && !effectiveRepoId) ?
-    (urlStatus?.chunksProcessed ?? 0) :
-    0;
-  const currentStage: 'creating' | 'fetching' | 'chunking' | 'embedding' | 'saving' | 'done' | null = (initialUrl && !effectiveRepoId) ?
-    (urlStatus?.indexingStage ?? 'creating') :
-    (repoQuery.data?.indexStatus === 'INDEXING' ? 'fetching' : null);
-  const indexingDetail = (initialUrl && !effectiveRepoId) ?
-    (urlStatus?.indexingDetail ?? 'Creating repo row...') :
-    null;
+  const filesTotal = urlStatus?.filesTotal ?? repo?.filesTotal ?? 0;
+  const filesProcessed = urlStatus?.filesProcessed ?? repo?.filesProcessed ?? 0;
+  const chunksTotal = urlStatus?.chunksTotal ?? repo?.chunkCount ?? 0;
+  const chunksProcessed = urlStatus?.chunksProcessed ?? 0;
+  const currentStage: 'creating' | 'fetching' | 'chunking' | 'embedding' | 'saving' | 'done' | null =
+    urlStatus?.indexingStage ?? (repo?.indexStatus === 'INDEXING' ? 'fetching' : 'creating');
+  const indexingDetail = urlStatus?.indexingDetail ?? 'Creating repo row...';
 
-  // CRITICAL: Show creating/fetching/chunking overlay IMMEDIATELY when URL exists but no repo ID yet
-  // This MUST come before the loading check to prevent "Loading chat..." being shown
-  if (initialUrl && !effectiveRepoId) {
+  // CRITICAL: Keep showing indexing overlay whenever we don't have `repo` yet (and haven't errored)
+  // while `initialUrl` or live status exists — prevents flashing/sticking on "Loading chat..."
+  // when repoId resolves or user switches back from another tab.
+  if (!repo && !repoQuery.isError && (initialUrl || (urlStatus && urlStatus.indexStatus !== "READY"))) {
     const tempStatus = {
-      repositoryId: 'temp',
-      indexStatus: 'INDEXING' as const,
+      repositoryId: effectiveRepoId || 'temp',
+      indexStatus: urlStatus?.indexStatus ?? ('INDEXING' as const),
       filesTotal,
       filesProcessed,
-      chunkCount: chunksTotal,
+      chunkCount: urlStatus?.chunkCount ?? chunksTotal,
       chunksTotal,
       chunksProcessed,
       indexingStage: currentStage,
       indexingDetail,
-      indexedAt: null,
+      indexedAt: urlStatus?.indexedAt ?? null,
       errorMessage: urlStatus?.errorMessage ?? null,
     };
     const tempRepo = {
-      id: 'temp',
+      id: effectiveRepoId || 'temp',
       githubRepoId: 0,
       owner: '',
       name: '',
@@ -159,12 +185,12 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
       language: null,
       htmlUrl: null,
       description: null,
-      indexStatus: 'INDEXING' as const,
-      indexedAt: null,
-      chunkCount: 0,
-      filesTotal: 0,
-      filesProcessed: 0,
-      errorMessage: null,
+      indexStatus: tempStatus.indexStatus,
+      indexedAt: tempStatus.indexedAt,
+      chunkCount: tempStatus.chunkCount,
+      filesTotal,
+      filesProcessed,
+      errorMessage: tempStatus.errorMessage,
     };
     return (
       <AppShell title="Indexing repository…" description={indexingDetail ?? 'Starting indexing...'}>
@@ -187,29 +213,7 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
     );
   }
 
-  const repo = repoQuery.data;
-
-  // Stabilize merged repo prop so 60fps streaming updates in ChatView never re-render memoized ChatSidebar
-  const sidebarRepo = useMemo(() => {
-    if (!repo) return null;
-    return {
-      ...repo,
-      indexStatus: indexStatus ?? repo.indexStatus,
-      filesProcessed: statusQuery.data?.filesProcessed ?? repo.filesProcessed,
-      filesTotal: statusQuery.data?.filesTotal ?? repo.filesTotal,
-      chunkCount: statusQuery.data?.chunkCount ?? repo.chunkCount,
-      errorMessage: statusQuery.data?.errorMessage ?? repo.errorMessage,
-    };
-  }, [
-    repo,
-    indexStatus,
-    statusQuery.data?.filesProcessed,
-    statusQuery.data?.filesTotal,
-    statusQuery.data?.chunkCount,
-    statusQuery.data?.errorMessage,
-  ]);
-
-  // Only show "Loading chat..." when !repo && !isLoading (no initialUrl)
+  // Only show "Loading chat..." when !repo && !initialUrl (direct visit to /chat/<uuid>)
   if (!repo || !sidebarRepo) {
     return (
       <AppShell title="Loading chat…">

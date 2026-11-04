@@ -43,6 +43,9 @@ export function useRepository(
     queryKey: queryKeys.repos.detail(repoId),
     queryFn: () => api.getRepo(repoId),
     enabled: Boolean(repoId) && (options?.enabled ?? true),
+    retry: 2,
+    refetchOnWindowFocus: (query) =>
+      !query.state.data || query.state.data.indexStatus !== "READY",
     refetchInterval: (query) =>
       pollWhileIndexing && query.state.data?.indexStatus === "INDEXING"
         ? INDEXING_POLL_MS
@@ -55,6 +58,8 @@ export function useIndexStatus(repoId: string, enabled = false) {
     queryKey: queryKeys.repos.status(repoId),
     queryFn: () => api.indexStatus(repoId),
     enabled: Boolean(repoId) && enabled,
+    refetchOnWindowFocus: (query) =>
+      query.state.data?.indexStatus !== "READY" && query.state.data?.indexStatus !== "FAILED",
     refetchInterval: (query) =>
       query.state.data?.indexStatus === "READY" || query.state.data?.indexStatus === "FAILED"
         ? false
@@ -67,6 +72,8 @@ export function useIndexStatusByUrl(url: string, enabled = false) {
     queryKey: queryKeys.repos.statusByUrl(url),
     queryFn: () => api.indexStatusByUrl(url),
     enabled: Boolean(url) && enabled,
+    refetchOnWindowFocus: (query) =>
+      query.state.data?.indexStatus !== "READY" && query.state.data?.indexStatus !== "FAILED",
     refetchInterval: (query) =>
       query.state.data?.indexStatus === "READY" || query.state.data?.indexStatus === "FAILED"
         ? false
