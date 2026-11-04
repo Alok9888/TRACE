@@ -166,3 +166,12 @@
 .tabular-telemetry {
   font-variant-numeric: tabular-nums;
 }
+
+/* Hide scrollbars on horizontal mobile filter strips */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

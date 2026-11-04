@@ -78,33 +78,51 @@ export function DashboardHeader({
 }: DashboardHeaderProps) {
   return (
     <div className="sticky top-0 z-20 border-b border-border bg-background/90 backdrop-blur-md">
-      <div className="flex flex-col gap-4 px-5 py-4 md:px-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex min-w-0 items-start gap-3">
-            <SidebarTrigger className="-ml-1 mt-0.5" />
-            <div className="min-w-0">
-              <h1 className="font-heading text-lg font-semibold tracking-[0.14em] uppercase">
-                Repositories
-              </h1>
-              <p className="tabular-telemetry font-mono text-[11px] tracking-[0.12em] text-muted-foreground uppercase">
-                {totalCount != null
-                  ? `${totalCount} TRACKED // ${readyCount ?? 0} ONLINE`
-                  : "SYNC AND INDEX A REPOSITORY TO INITIATE TELEMETRY"}
-              </p>
+      <div className="flex flex-col gap-3 px-4 py-3 sm:gap-4 sm:px-5 sm:py-4 md:px-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <SidebarTrigger className="-ml-1" />
+              <div className="min-w-0">
+                <h1 className="truncate font-heading text-base font-semibold tracking-[0.14em] uppercase sm:text-lg">
+                  Repositories
+                </h1>
+                <p className="tabular-telemetry truncate font-mono text-[10px] tracking-[0.12em] text-muted-foreground uppercase sm:text-[11px]">
+                  {totalCount != null
+                    ? `${totalCount} TRACKED // ${readyCount ?? 0} ONLINE`
+                    : "SYNC AND INDEX A REPOSITORY TO INITIATE TELEMETRY"}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 sm:hidden">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onSync}
+                disabled={isSyncing}
+              >
+                <RefreshCw
+                  data-icon="inline-start"
+                  className={isSyncing ? "animate-spin" : undefined}
+                />
+                Sync
+              </Button>
+              <ModeToggle />
             </div>
           </div>
 
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <div className="relative min-w-[220px] flex-1 sm:min-w-[280px]">
+          <div className="flex items-center gap-2">
+            <div className="relative min-w-0 flex-1 sm:min-w-[260px]">
               <Search className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={search}
                 onChange={(e) => onSearchChange(e.target.value)}
                 placeholder="Filter repositories..."
-                className="h-9 rounded-[2px] border-input bg-card pl-9 font-mono text-xs"
+                className="h-8 rounded-[2px] border-input bg-card pl-9 font-mono text-xs sm:h-9"
               />
             </div>
-            <div className="flex items-center gap-2">
+            <div className="hidden items-center gap-2 sm:flex">
               <Button
                 variant="outline"
                 onClick={onSync}
@@ -123,9 +141,9 @@ export function DashboardHeader({
 
         <Separator className="opacity-60" />
 
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="mr-2 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+        <div className="no-scrollbar flex items-center justify-between gap-4 overflow-x-auto pb-0.5">
+          <div className="flex shrink-0 items-center gap-1.5">
+            <span className="mr-1 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
               Scope
             </span>
             {visibilityFilters.map((filter) => (
@@ -139,8 +157,8 @@ export function DashboardHeader({
             ))}
           </div>
 
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="mr-2 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+          <div className="flex shrink-0 items-center gap-1.5">
+            <span className="mr-1 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
               State
             </span>
             {statusFilters.map((filter) => (

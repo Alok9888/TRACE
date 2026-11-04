@@ -96,10 +96,10 @@ export function OverviewDashboard() {
 
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         {reposQuery.isLoading ? (
           Array.from({ length: 4 }).map((_, index) => (
-            <Skeleton key={index} className="h-28 rounded-2xl" />
+            <Skeleton key={index} className="h-24 rounded-[2px] sm:h-28" />
           ))
         ) : (
           <>

@@ -1,8 +1,8 @@
 "use client";
 
-import { memo } from "react";
+import { memo, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { Plus, RotateCcw } from "lucide-react";
+import { ChevronDown, Plus, RotateCcw } from "lucide-react";
 
 import { IndexStatusBadge } from "@/components/dashboard/repo-status";
 import { Button } from "@/components/ui/button";
@@ -30,10 +30,61 @@ export const ChatSidebar = memo(function ChatSidebar({
   const sessionsQuery = useChatSessions(repo.id, ready);
   const createSession = useCreateChatSession(repo.id);
   const reindex = useStartIndexing();
+  const [mobileLogsOpen, setMobileLogsOpen] = useState(false);
+
+  const activeSession = sessionsQuery.data?.find((s) => s.id === sessionId);
 
   return (
-    <aside className="flex w-full flex-col border-b border-border bg-sidebar md:w-72 md:border-r md:border-b-0">
-      <div className="space-y-3.5 p-4">
+    <aside className="flex w-full shrink-0 flex-col border-b border-border bg-sidebar md:w-72 md:border-r md:border-b-0">
+      {/* Compact mobile bar (< md) so chat gets the full viewport height */}
+      <div className="flex items-center justify-between gap-2 px-3 py-2 md:hidden">
+        <button
+          type="button"
+          onClick={() => setMobileLogsOpen((prev) => !prev)}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        >
+          <IndexStatusBadge status={repo.indexStatus} />
+          <span className="truncate font-mono text-[11px] tracking-[0.06em] text-foreground">
+            {activeSession?.title ?? repo.name}
+          </span>
+          <ChevronDown
+            className={cn(
+              "size-3.5 shrink-0 text-muted-foreground transition-transform",
+              mobileLogsOpen && "rotate-180"
+            )}
+          />
+        </button>
+
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Button
+            size="xs"
+            disabled={!ready || createSession.isPending}
+            onClick={() =>
+              createSession.mutate("New chat", {
+                onSuccess: (session) => {
+                  onSelectSession(session.id);
+                  setMobileLogsOpen(false);
+                },
+              })
+            }
+          >
+            <Plus className="size-3" />
+            New
+          </Button>
+          <Button
+            size="icon-xs"
+            variant="outline"
+            disabled={reindex.isPending || repo.indexStatus === "INDEXING"}
+            onClick={() => reindex.mutate(repo.id)}
+            aria-label="Re-index repository"
+          >
+            <RotateCcw className="size-3" />
+          </Button>
+        </div>
+      </div>
+
+      {/* Desktop repository header */}
+      <div className="hidden space-y-3.5 p-4 md:block">
         <div className="space-y-1.5">
           <p className="font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
             TARGET REPOSITORY
@@ -82,14 +133,24 @@ export const ChatSidebar = memo(function ChatSidebar({
         </div>
       </div>
 
-      <Separator />
+      <Separator className={cn(!mobileLogsOpen && "hidden md:block")} />
 
-      <div className="px-4 py-2.5 font-mono text-[10px] font-medium tracking-[0.18em] text-muted-foreground uppercase">
-        Comms Logs
+      <div
+        className={cn(
+          "px-4 py-2 font-mono text-[10px] font-medium tracking-[0.18em] text-muted-foreground uppercase",
+          !mobileLogsOpen && "hidden md:block"
+        )}
+      >
+        Comms Logs {sessionsQuery.data ? `(${sessionsQuery.data.length})` : ""}
       </div>
 
-      <ScrollArea className="flex-1">
-        <div className="space-y-1 px-2 pb-4">
+      <ScrollArea
+        className={cn(
+          "max-h-52 border-t border-border/60 md:max-h-none md:flex-1 md:border-t-0",
+          !mobileLogsOpen && "hidden md:block"
+        )}
+      >
+        <div className="space-y-1 px-2 py-2 md:py-0 md:pb-4">
           {!ready && (
             <p className="px-2 font-mono text-[11px] text-muted-foreground">
               Channels unlock once indexing completes.
@@ -98,16 +159,19 @@ export const ChatSidebar = memo(function ChatSidebar({
 
           {sessionsQuery.isLoading &&
             Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton key={i} className="h-12 rounded-[2px]" />
+              <Skeleton key={i} className="h-11 rounded-[2px]" />
             ))}
 
           {sessionsQuery.data?.map((session) => (
             <button
               key={session.id}
               type="button"
-              onClick={() => onSelectSession(session.id)}
+              onClick={() => {
+                onSelectSession(session.id);
+                setMobileLogsOpen(false);
+              }}
               className={cn(
-                "w-full rounded-[2px] border-l-2 px-3 py-2.5 text-left transition-colors",
+                "w-full rounded-[2px] border-l-2 px-3 py-2 text-left transition-colors md:py-2.5",
                 sessionId === session.id
                   ? "border-l-foreground bg-accent text-foreground"
                   : "border-l-transparent text-muted-foreground hover:bg-accent/50 hover:text-foreground"
