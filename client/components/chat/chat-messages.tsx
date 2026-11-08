@@ -10,15 +10,17 @@ import { Skeleton } from "@/components/ui/skeleton";
 import type { ChatMessage, Repository } from "@/lib/api";
 
 const LOADING_MESSAGES = [
-  "Searching repository...",
-  "Reading matched files...",
-  "Synthesizing answer...",
+  "QUERYING VECTOR SPACE...",
+  "LOCATING SOURCE COORDINATES...",
+  "READING RETRIEVED SEGMENTS...",
+  "SYNTHESIZING RESPONSE...",
+  "STREAMING TELEMETRY...",
 ];
 
 const STARTER_PROMPTS = [
-  "Summarize the overall architecture of this repository.",
-  "Where is the main entry point and how does startup work?",
-  "Trace the primary request or data flow end to end.",
+  "Map the system architecture and core module boundaries.",
+  "Locate the entry point and trace the startup sequence.",
+  "Trace the primary request lifecycle end to end.",
 ];
 
 const MessageRow = memo(function MessageRow({
@@ -41,10 +43,10 @@ const MessageRow = memo(function MessageRow({
   if (isUser) {
     return (
       <div className="flex flex-col items-end gap-1.5">
-        <span className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
-          You
+        <span className="font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+          OPERATOR
         </span>
-        <div className="max-w-[85%] rounded-[2px] border border-foreground/20 bg-foreground/[0.06] px-4 py-2.5 text-sm leading-relaxed text-foreground">
+        <div className="max-w-[85%] rounded-[2px] border border-foreground/25 bg-foreground/[0.06] px-4 py-2.5 text-sm leading-relaxed text-foreground">
           <span className="whitespace-pre-wrap">{message.content}</span>
         </div>
       </div>
@@ -54,9 +56,9 @@ const MessageRow = memo(function MessageRow({
   return (
     <div className="group flex flex-col items-start gap-2">
       <div className="flex w-full items-center justify-between gap-2">
-        <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
-          <span className="size-1.5 rounded-full bg-foreground/70" />
-          <span>DevPilot</span>
+        <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+          <span className="size-1.5 rounded-full bg-foreground/75" />
+          <span>DEVPILOT // TELEMETRY</span>
         </div>
         <button
           type="button"
@@ -76,8 +78,8 @@ const MessageRow = memo(function MessageRow({
               <CitationChips repo={repo} citations={message.citations} />
             )}
             {message.responseModel?.fallback && (
-              <span className="font-mono text-[10px] tracking-[0.08em] text-muted-foreground uppercase">
-                Fallback · {message.responseModel.provider ?? "AI"} {message.responseModel.model}
+              <span className="font-mono text-[10px] tracking-[0.1em] text-muted-foreground uppercase">
+                FALLBACK // {message.responseModel.provider ?? "AI"} {message.responseModel.model}
               </span>
             )}
           </div>
@@ -144,16 +146,16 @@ export function ChatMessages({
     <ScrollArea className="min-h-0 flex-1 overflow-hidden">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 sm:gap-7 sm:px-5 sm:py-8">
         {messages.length === 0 && !streamText && (
-          <div className="space-y-5 border border-border bg-card/50 p-5 sm:p-7">
+          <div className="space-y-5 border border-border bg-card/60 p-5 sm:p-7">
             <div className="space-y-1.5">
-              <p className="font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase">
-                {repo.fullName}
+              <p className="font-mono text-[10px] tracking-[0.2em] text-muted-foreground uppercase">
+                COMMS CHANNEL OPEN // {repo.fullName}
               </p>
-              <p className="font-heading text-lg font-semibold tracking-[0.04em] uppercase">
-                Ask anything about this codebase
+              <p className="font-heading text-lg font-semibold tracking-[0.06em] uppercase">
+                Ready for Codebase Interrogation
               </p>
               <p className="text-xs leading-relaxed text-muted-foreground">
-                Answers are grounded in indexed source files with direct line citations.
+                Query architecture, execution paths, or symbols. Responses are grounded directly in retrieved source lines.
               </p>
             </div>
             {onSelectPrompt && (
@@ -179,18 +181,18 @@ export function ChatMessages({
             <MessageRow key={message.id} message={message} repo={repo} />
           ))}
 
-          {/* Loading status before first token */}
+          {/* Loading telemetry status before first token */}
           {showLoading && (
             <div className="flex flex-col items-start gap-2">
-              <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+              <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
                 <span className="size-1.5 animate-pulse rounded-full bg-foreground" />
-                <span>DevPilot</span>
+                <span>DEVPILOT // RECEIVING</span>
               </div>
-              <div className="flex flex-wrap items-center gap-3 border-l border-foreground/35 py-1 pl-4 font-mono text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-3 border-l border-foreground/40 py-1 pl-4 font-mono text-xs text-muted-foreground">
                 <span>{LOADING_MESSAGES[loadingMessageIndex]}</span>
                 {showLongWaitWarning && (
                   <span className="text-[11px] text-foreground/70">
-                    Still working on a larger context...
+                    EXTENDED RETRIEVAL IN PROGRESS...
                   </span>
                 )}
               </div>
@@ -199,11 +201,11 @@ export function ChatMessages({
 
           {streamText && (
             <div className="flex flex-col items-start gap-2">
-              <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+              <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
                 <span className="size-1.5 animate-pulse rounded-full bg-foreground" />
-                <span>DevPilot</span>
+                <span>DEVPILOT // STREAMING</span>
               </div>
-              <div className="w-full border-l border-foreground/40 pl-4">
+              <div className="w-full border-l border-foreground/45 pl-4">
                 <ChatMarkdown content={streamText} isStreaming />
                 <span className="ml-1 inline-block h-3.5 w-1.5 animate-pulse bg-foreground align-middle" />
               </div>
@@ -216,18 +218,18 @@ export function ChatMessages({
             role="alert"
             className="border border-destructive/50 bg-destructive/10 p-4 text-xs"
           >
-            <p className="font-mono text-[11px] font-semibold tracking-[0.12em] text-destructive uppercase">
+            <p className="font-mono text-[11px] font-semibold tracking-[0.14em] text-destructive uppercase">
               {streamError.code === "QUOTA_EXCEEDED"
-                ? "Groq daily quota exceeded"
+                ? "FAULT // GROQ DAILY QUOTA EXCEEDED"
                 : streamError.code === "MODEL_OVERLOADED"
-                  ? "Provider temporarily overloaded"
-                  : "Request failed"}
+                  ? "FAULT // PROVIDER OVERLOADED"
+                  : "FAULT // GENERATION FAILED"}
             </p>
             <p className="mt-1.5 text-foreground/90">{streamError.message}</p>
             {streamError.code === "QUOTA_EXCEEDED" && (
               <p className="mt-1.5 font-mono text-[10px] text-muted-foreground">
-                Tried: {(streamError.triedModels ?? []).join(", ")}
-                {streamError.retryAfter ? ` · Retry in ${streamError.retryAfter}` : ""}
+                TRIED: {(streamError.triedModels ?? []).join(", ")}
+                {streamError.retryAfter ? ` · RETRY IN ${streamError.retryAfter}` : ""}
               </p>
             )}
             {onRetry && (
@@ -236,7 +238,7 @@ export function ChatMessages({
                 className="mt-3 rounded-[2px] border border-foreground/30 px-3 py-1.5 font-heading text-[11px] font-semibold tracking-[0.14em] uppercase transition-colors hover:border-foreground hover:bg-foreground hover:text-background"
                 onClick={onRetry}
               >
-                Retry
+                Retry Transmission
               </button>
             )}
           </div>

@@ -231,14 +231,14 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
       description={
         ready
           ? repo.chunkCount > 0
-            ? `${repo.chunkCount.toLocaleString()} indexed chunks`
-            : "Ready"
-          : "Indexing repository"
+            ? `COMMS ONLINE // ${repo.chunkCount.toLocaleString()} VECTORS INDEXED`
+            : "COMMS ONLINE // GROUNDED IN REPOSITORY"
+          : "INGESTION SEQUENCE IN PROGRESS"
       }
       actions={
         <Button variant="outline" size="sm" render={<Link href="/dashboard" />}>
           <ArrowLeft data-icon="inline-start" />
-          Repos
+          Console
         </Button>
       }
     >

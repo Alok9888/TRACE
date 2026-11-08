@@ -194,10 +194,10 @@ export function IndexingState({
       <div className="relative z-10 w-full max-w-xl space-y-5 border border-border bg-background/85 p-5 backdrop-blur-md sm:space-y-6 sm:p-6 md:p-8">
         <div className="flex items-start justify-between gap-4 border-b border-border pb-4">
           <div className="min-w-0 space-y-1">
-            <p className="font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
-              Indexing
+            <p className="font-mono text-[10px] tracking-[0.2em] text-muted-foreground uppercase">
+              INGESTION SEQUENCE // ACTIVE
             </p>
-            <h2 className="truncate font-heading text-lg font-semibold tracking-[0.06em] uppercase">
+            <h2 className="truncate font-heading text-lg font-semibold tracking-[0.1em] uppercase">
               {repo.fullName}
             </h2>
           </div>
@@ -256,8 +256,8 @@ export function IndexingState({
           </div>
         </div>
 
-        <p className="border-t border-border/70 pt-4 font-mono text-[10px] tracking-[0.12em] text-muted-foreground uppercase">
-          Chat unlocks automatically when indexing finishes
+        <p className="border-t border-border/70 pt-4 font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+          COMMS CHANNEL UNLOCKS AUTOMATICALLY UPON SEQUENCE COMPLETION
         </p>
       </div>
     </div>

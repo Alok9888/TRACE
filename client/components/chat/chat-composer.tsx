@@ -35,7 +35,7 @@ export const ChatComposer = memo(function ChatComposer({
           <Textarea
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            placeholder="Ask about architecture, files, or symbols..."
+            placeholder="Query architecture, execution flows, or symbols..."
             disabled={disabled}
             className="min-h-11 flex-1 resize-none border-0 bg-transparent px-2.5 py-2 text-sm shadow-none focus-visible:ring-0"
             onKeyDown={(e) => {
@@ -54,7 +54,7 @@ export const ChatComposer = memo(function ChatComposer({
               className="h-9 px-3"
             >
               <Square className="size-3" />
-              Stop
+              Abort
             </Button>
           ) : (
             <Button
@@ -69,10 +69,11 @@ export const ChatComposer = memo(function ChatComposer({
             </Button>
           )}
         </div>
-        <div className="flex items-center justify-between px-0.5 font-mono text-[10px] tracking-[0.1em] text-muted-foreground uppercase">
+        <div className="flex items-center justify-between px-0.5 font-mono text-[10px] tracking-[0.12em] text-muted-foreground uppercase">
           <span>
-            <Kbd>Enter</Kbd> send · <Kbd>Shift+Enter</Kbd> newline
+            <Kbd>ENTER</Kbd> TRANSMIT · <Kbd>SHIFT+ENTER</Kbd> NEWLINE
           </span>
+          <span className="hidden sm:inline">GROUNDED RAG // 384-DIM</span>
         </div>
       </div>
     </div>

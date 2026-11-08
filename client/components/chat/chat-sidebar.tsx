@@ -86,22 +86,22 @@ export const ChatSidebar = memo(function ChatSidebar({
       {/* Desktop repository header */}
       <div className="hidden space-y-3.5 p-4 md:block">
         <div className="space-y-1.5">
-          <p className="font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase">
-            Repository
+          <p className="font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+            TARGET REPOSITORY
           </p>
-          <p className="truncate font-heading text-sm font-semibold tracking-[0.04em]">
+          <p className="truncate font-heading text-sm font-semibold tracking-[0.06em]">
             {repo.fullName}
           </p>
           <div className="flex flex-wrap items-center gap-2 pt-0.5">
             <IndexStatusBadge status={repo.indexStatus} />
             {repo.chunkCount > 0 && (
-              <span className="tabular-telemetry font-mono text-[10px] tracking-[0.08em] text-muted-foreground uppercase">
-                {repo.chunkCount.toLocaleString()} chunks
+              <span className="tabular-telemetry font-mono text-[10px] tracking-[0.1em] text-muted-foreground uppercase">
+                {repo.chunkCount.toLocaleString()} VECTORS
               </span>
             )}
             {repo.isPrivate && (
-              <span className="font-mono text-[10px] tracking-[0.1em] text-muted-foreground uppercase">
-                Private
+              <span className="font-mono text-[10px] tracking-[0.12em] text-muted-foreground uppercase">
+                PRIVATE
               </span>
             )}
           </div>
@@ -119,7 +119,7 @@ export const ChatSidebar = memo(function ChatSidebar({
             }
           >
             <Plus data-icon="inline-start" />
-            New Chat
+            New Channel
           </Button>
           <Button
             size="sm"
@@ -137,11 +137,11 @@ export const ChatSidebar = memo(function ChatSidebar({
 
       <div
         className={cn(
-          "px-4 py-2 font-mono text-[10px] font-medium tracking-[0.16em] text-muted-foreground uppercase",
+          "px-4 py-2.5 font-mono text-[10px] font-medium tracking-[0.18em] text-muted-foreground uppercase",
           !mobileLogsOpen && "hidden md:block"
         )}
       >
-        Sessions {sessionsQuery.data ? `(${sessionsQuery.data.length})` : ""}
+        Comms Logs {sessionsQuery.data ? `(${sessionsQuery.data.length})` : ""}
       </div>
 
       <ScrollArea

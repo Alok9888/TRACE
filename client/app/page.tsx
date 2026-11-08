@@ -68,11 +68,15 @@ export default function HomePage() {
         <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between px-4 sm:px-6">
           <BrandMark />
           <div className="flex items-center gap-4 sm:gap-5">
+            <span className="hidden items-center gap-2 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase sm:inline-flex">
+              <span className="size-1.5 rounded-full bg-foreground/80" />
+              SYS // NOMINAL
+            </span>
             <Link
               href="/dashboard"
               className="font-heading text-xs font-semibold tracking-[0.16em] text-muted-foreground uppercase transition-colors hover:text-foreground"
             >
-              Repositories
+              Console
             </Link>
             <ModeToggle />
           </div>
@@ -84,14 +88,14 @@ export default function HomePage() {
         <section className="max-w-2xl space-y-6 pt-2 sm:space-y-8 sm:pt-4 md:pt-10">
           <div className="space-y-3 sm:space-y-4">
             <p className="font-mono text-[10px] tracking-[0.22em] text-muted-foreground uppercase sm:text-[11px]">
-              CODEBASE INTELLIGENCE
+              00 // CODEBASE TELEMETRY ENGINE
             </p>
-            <h1 className="font-heading text-[2.25rem] leading-[1.02] font-semibold tracking-[0.03em] uppercase sm:text-6xl">
-              Understand Any Repository.
+            <h1 className="font-heading text-[2.25rem] leading-[1.02] font-semibold tracking-[0.04em] uppercase sm:text-6xl">
+              Interrogate Any Repository.
             </h1>
             <p className="max-w-lg text-sm leading-relaxed text-muted-foreground sm:text-base">
-              Index public GitHub repositories and ask direct questions about architecture,
-              control flow, and symbols with line-level citations.
+              Stream public GitHub source trees into vector space and query architecture,
+              execution paths, and symbols with line-level citations.
             </p>
           </div>
 
@@ -141,33 +145,33 @@ export default function HomePage() {
                 role="alert"
                 className="font-mono text-xs tracking-wide text-destructive"
               >
-                {error}
+                ERR // {error}
               </p>
             ) : (
-              <p className="font-mono text-[10px] tracking-[0.12em] text-muted-foreground/75 uppercase sm:text-[11px]">
-                Public GitHub repositories · No sign-in required
+              <p className="font-mono text-[10px] tracking-[0.12em] text-muted-foreground/80 uppercase sm:text-[11px]">
+                PUBLIC REPOSITORIES · ZERO AUTH REQUIRED · PRESS ENTER TO INITIATE
               </p>
             )}
           </div>
         </section>
 
-        {/* Bottom architectural spec strip */}
+        {/* Bottom architectural telemetry strip */}
         <section className="mt-12 grid gap-6 border-t border-border/80 pt-6 sm:mt-20 sm:gap-8 sm:pt-8 md:grid-cols-3">
           {[
             {
               index: "01",
               title: "INGEST",
-              body: "Streams repository archives and filters generated assets before chunking.",
+              body: "Single-pass archive streaming and diff-aware filtering strip build artifacts before chunking.",
             },
             {
               index: "02",
-              title: "INDEX",
-              body: "Line-aligned code segments embedded and stored in Postgres with pgvector.",
+              title: "VECTORIZE",
+              body: "Line-aligned code segments embedded at 384 dimensions and indexed in Postgres + pgvector.",
             },
             {
               index: "03",
-              title: "QUERY",
-              body: "Streaming answers grounded in retrieved source ranges and direct file links.",
+              title: "INTERROGATE",
+              body: "Low-latency streaming responses grounded strictly in retrieved source ranges and file links.",
             },
           ].map((item) => (
             <div key={item.index} className="space-y-2.5">
