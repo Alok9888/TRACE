@@ -162,7 +162,7 @@ export function AppShell({
             </div>
           </header>
         )}
-        <div className="flex flex-1 flex-col">{children}</div>
+        <div className="flex min-h-0 flex-1 flex-col">{children}</div>
       </SidebarInset>
       {addRepoDialogOpen && (
         <AddRepoDialog open={addRepoDialogOpen} onOpenChange={setAddRepoDialogOpen} />

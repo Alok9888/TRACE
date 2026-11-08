@@ -141,7 +141,7 @@ export function ChatMessages({
   }
 
   return (
-    <ScrollArea className="flex-1">
+    <ScrollArea className="min-h-0 flex-1 overflow-hidden">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 sm:gap-7 sm:px-5 sm:py-8">
         {messages.length === 0 && !streamText && (
           <div className="space-y-5 border border-border bg-card/50 p-5 sm:p-7">

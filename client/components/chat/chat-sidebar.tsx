@@ -35,7 +35,7 @@ export const ChatSidebar = memo(function ChatSidebar({
   const activeSession = sessionsQuery.data?.find((s) => s.id === sessionId);
 
   return (
-    <aside className="flex w-full shrink-0 flex-col border-b border-border bg-sidebar md:w-72 md:border-r md:border-b-0">
+    <aside className="sticky top-13 z-10 flex w-full shrink-0 flex-col border-b border-border bg-sidebar md:h-full md:w-72 md:overflow-hidden md:border-r md:border-b-0">
       {/* Compact mobile bar (< md) so chat gets the full viewport height */}
       <div className="flex items-center justify-between gap-2 px-3 py-2 md:hidden">
         <button
@@ -146,7 +146,7 @@ export const ChatSidebar = memo(function ChatSidebar({
 
       <ScrollArea
         className={cn(
-          "max-h-52 border-t border-border/60 md:max-h-none md:flex-1 md:border-t-0",
+          "min-h-0 max-h-52 overflow-hidden border-t border-border/60 md:max-h-none md:flex-1 md:border-t-0",
           !mobileLogsOpen && "hidden md:block"
         )}
       >

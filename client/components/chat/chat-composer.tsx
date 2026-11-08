@@ -29,7 +29,7 @@ export const ChatComposer = memo(function ChatComposer({
   }
 
   return (
-    <div className="border-t border-border bg-background/90 px-3 py-3 backdrop-blur-md sm:px-5 sm:py-4">
+    <div className="shrink-0 border-t border-border bg-background/90 px-3 py-3 backdrop-blur-md sm:px-5 sm:py-4">
       <div className="mx-auto max-w-3xl space-y-2">
         <div className="flex items-end gap-2 rounded-[2px] border border-input bg-card p-1.5 transition-colors focus-within:border-foreground sm:p-2">
           <Textarea

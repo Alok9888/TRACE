@@ -242,7 +242,7 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
         </Button>
       }
     >
-      <div className="flex h-[calc(100svh-3.25rem)] min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
+      <div className="flex h-[calc(100svh-3.25rem)] max-h-[calc(100svh-3.25rem)] min-h-0 flex-col overflow-hidden md:h-[calc(100svh-4.25rem)] md:max-h-[calc(100svh-4.25rem)] md:flex-row">
         <ChatSidebar
           repo={sidebarRepo}
           sessionId={sessionId}
