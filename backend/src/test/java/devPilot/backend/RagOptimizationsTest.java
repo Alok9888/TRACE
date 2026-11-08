@@ -21,6 +21,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import devPilot.backend.config.EmbeddingConfig;
 import devPilot.backend.repository.RepositoryRepository;
+import devPilot.backend.services.ai.ChatPromptBuilder;
 import devPilot.backend.services.ai.CitationMapper;
 import devPilot.backend.services.ai.CodeContextRetriever;
 import devPilot.backend.services.ai.RagSettings;
@@ -229,5 +230,24 @@ class RagOptimizationsTest {
             assertEquals(64, batches.get(i).size());
         }
         assertEquals(14, batches.get(30).size());
+    }
+
+    @Test
+    void promptBuilderAdaptsResponseStructureAndLengthToQuestionComplexity() {
+        ChatPromptBuilder builder = new ChatPromptBuilder();
+
+        assertEquals(ChatPromptBuilder.QueryTier.TRIVIAL, builder.classifyQuery("hi"));
+        assertEquals(ChatPromptBuilder.QueryTier.TRIVIAL, builder.classifyQuery("thanks!"));
+        assertEquals(ChatPromptBuilder.QueryTier.SIMPLE, builder.classifyQuery("where is auth handled?"));
+        assertEquals(ChatPromptBuilder.QueryTier.SIMPLE, builder.classifyQuery("what port does backend use?"));
+        assertEquals(ChatPromptBuilder.QueryTier.STANDARD, builder.classifyQuery("how does the chat streaming handler manage fallbacks when groq fails?"));
+        assertEquals(ChatPromptBuilder.QueryTier.DEEP, builder.classifyQuery("trace the end-to-end indexing architecture step by step"));
+
+        String simplePrompt = builder.systemPrompt("owner/repo", ChatPromptBuilder.QueryTier.SIMPLE);
+        assertTrue(simplePrompt.contains("1 to 3 short sentences"));
+        assertTrue(simplePrompt.contains("Do NOT use markdown headings"));
+
+        String deepPrompt = builder.systemPrompt("owner/repo", ChatPromptBuilder.QueryTier.DEEP);
+        assertTrue(deepPrompt.contains("structured technical breakdown"));
     }
 }

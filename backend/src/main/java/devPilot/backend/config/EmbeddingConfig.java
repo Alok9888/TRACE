@@ -86,8 +86,9 @@ public class EmbeddingConfig {
         String[] statements = {
             "CREATE INDEX IF NOT EXISTS idx_vectors_cf384_embedding_hnsw ON " + VECTOR_TABLE
                 + " USING hnsw (embedding vector_cosine_ops)",
-            "CREATE INDEX IF NOT EXISTS idx_vectors_cf384_metadata_gin ON " + VECTOR_TABLE
-                + " USING gin (metadata jsonb_path_ops)",
+            // Spring AI creates `metadata` as `json` (not `jsonb`), so GIN must index `(metadata::jsonb)`!
+            "CREATE INDEX IF NOT EXISTS idx_vectors_cf384_metadata_jsonb_gin ON " + VECTOR_TABLE
+                + " USING gin ((metadata::jsonb) jsonb_path_ops)",
             "CREATE INDEX IF NOT EXISTS idx_vectors_cf384_repo_user ON " + VECTOR_TABLE
                 + " ((metadata->>'repoId'), (metadata->>'userId'))",
             "CREATE INDEX IF NOT EXISTS idx_vectors_cf384_repo_filepath ON " + VECTOR_TABLE

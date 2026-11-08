@@ -230,24 +230,26 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
       title={repo.fullName}
       description={
         ready
-          ? "COMMS ONLINE // GROUNDED IN REPOSITORY"
-          : "INGESTION SEQUENCE IN PROGRESS"
+          ? repo.chunkCount > 0
+            ? `${repo.chunkCount.toLocaleString()} indexed chunks`
+            : "Ready"
+          : "Indexing repository"
       }
       actions={
         <Button variant="outline" size="sm" render={<Link href="/dashboard" />}>
           <ArrowLeft data-icon="inline-start" />
-          Console
+          Repos
         </Button>
       }
     >
-      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+      <div className="flex h-[calc(100svh-3.25rem)] min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
         <ChatSidebar
           repo={sidebarRepo}
           sessionId={sessionId}
           onSelectSession={setSelectedSessionId}
         />
 
-        <section className="flex min-h-[70vh] min-w-0 flex-1 flex-col">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {!ready ? (
             <IndexingState repo={repo} status={statusQuery.data} />
           ) : (
@@ -261,6 +263,7 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
                 showLongWaitWarning={showLongWaitWarning}
                 streamError={streamError}
                 onRetry={retry}
+                onSelectPrompt={sessionId ? send : undefined}
               />
               <ChatComposer
                 disabled={!sessionId}

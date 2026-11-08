@@ -51,7 +51,7 @@ export default function HomePage() {
   }
 
   return (
-    <div className="relative flex min-h-svh flex-col overflow-hidden bg-background text-foreground">
+    <div className="relative flex min-h-svh flex-col overflow-x-clip bg-background text-foreground">
       {/* Real monochrome SpaceX night-launch photography — subtle, low-opacity atmospheric backdrop */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden select-none">
         <img
@@ -64,19 +64,15 @@ export default function HomePage() {
       </div>
 
       {/* Top mission bar */}
-      <header className="relative z-10 border-b border-border/80 bg-background/60 backdrop-blur-sm">
+      <header className="sticky top-0 z-30 border-b border-border/80 bg-background/75 backdrop-blur-md">
         <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between px-4 sm:px-6">
           <BrandMark />
           <div className="flex items-center gap-4 sm:gap-5">
-            <span className="hidden items-center gap-2 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase sm:inline-flex">
-              <span className="size-1.5 rounded-full bg-foreground/80" />
-              SYS // NOMINAL
-            </span>
             <Link
               href="/dashboard"
               className="font-heading text-xs font-semibold tracking-[0.16em] text-muted-foreground uppercase transition-colors hover:text-foreground"
             >
-              Console
+              Repositories
             </Link>
             <ModeToggle />
           </div>
@@ -88,14 +84,14 @@ export default function HomePage() {
         <section className="max-w-2xl space-y-6 pt-2 sm:space-y-8 sm:pt-4 md:pt-10">
           <div className="space-y-3 sm:space-y-4">
             <p className="font-mono text-[10px] tracking-[0.22em] text-muted-foreground uppercase sm:text-[11px]">
-              00 // CODEBASE TELEMETRY ENGINE
+              CODEBASE INTELLIGENCE
             </p>
-            <h1 className="font-heading text-[2.25rem] leading-[1.02] font-semibold tracking-[0.04em] uppercase sm:text-6xl">
-              Interrogate Any Repository.
+            <h1 className="font-heading text-[2.25rem] leading-[1.02] font-semibold tracking-[0.03em] uppercase sm:text-6xl">
+              Understand Any Repository.
             </h1>
             <p className="max-w-lg text-sm leading-relaxed text-muted-foreground sm:text-base">
-              Stream public GitHub source trees into vector space and query architecture,
-              execution paths, and symbols with line-level citations.
+              Index public GitHub repositories and ask direct questions about architecture,
+              control flow, and symbols with line-level citations.
             </p>
           </div>
 
@@ -145,33 +141,33 @@ export default function HomePage() {
                 role="alert"
                 className="font-mono text-xs tracking-wide text-destructive"
               >
-                ERR // {error}
+                {error}
               </p>
             ) : (
-              <p className="font-mono text-[10px] tracking-[0.12em] text-muted-foreground/80 uppercase sm:text-[11px]">
-                PUBLIC REPOSITORIES · ZERO AUTH REQUIRED · PRESS ENTER TO INITIATE
+              <p className="font-mono text-[10px] tracking-[0.12em] text-muted-foreground/75 uppercase sm:text-[11px]">
+                Public GitHub repositories · No sign-in required
               </p>
             )}
           </div>
         </section>
 
-        {/* Bottom architectural telemetry strip */}
+        {/* Bottom architectural spec strip */}
         <section className="mt-12 grid gap-6 border-t border-border/80 pt-6 sm:mt-20 sm:gap-8 sm:pt-8 md:grid-cols-3">
           {[
             {
               index: "01",
               title: "INGEST",
-              body: "Single-pass archive streaming and diff-aware filtering strip build artifacts before chunking.",
+              body: "Streams repository archives and filters generated assets before chunking.",
             },
             {
               index: "02",
-              title: "VECTORIZE",
-              body: "Line-aligned code segments embedded at 384 dimensions and indexed in Postgres + pgvector.",
+              title: "INDEX",
+              body: "Line-aligned code segments embedded and stored in Postgres with pgvector.",
             },
             {
               index: "03",
-              title: "INTERROGATE",
-              body: "Low-latency streaming responses grounded strictly in retrieved source ranges and file links.",
+              title: "QUERY",
+              body: "Streaming answers grounded in retrieved source ranges and direct file links.",
             },
           ].map((item) => (
             <div key={item.index} className="space-y-2.5">

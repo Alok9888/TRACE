@@ -87,7 +87,10 @@ public class ChatStreamHandler {
     private final CodeContextRetriever codeContextRetriever;
     private final ChatPromptBuilder chatPromptBuilder;
 
-    @Value("${app.groq.chat.models:openai/gpt-oss-20b,llama-3.3-70b-versatile,openai/gpt-oss-120b}")
+    @Value("${app.groq.fast-model:llama-3.1-8b-instant}")
+    private String configuredFastModel;
+
+    @Value("${app.groq.chat.models:llama-3.3-70b-versatile,llama-3.1-8b-instant,openai/gpt-oss-20b,openai/gpt-oss-120b}")
     private String configuredGroqModels;
 
     @Value("${app.groq.reasoning-effort:low}")
@@ -199,8 +202,11 @@ public class ChatStreamHandler {
         try {
             stage.set("SESSION");
             ChatStreamContext streamContext = contextSupplier.get();
+            long sessionMs = System.currentTimeMillis() - requestStartMs;
             sessionId = streamContext.sessionId();
             UUID finalSessionId = sessionId;
+
+            ChatPromptBuilder.QueryTier queryTier = chatPromptBuilder.classifyQuery(question);
 
             UUID userMessageId = UUID.randomUUID();
             Instant userCreatedAt = Instant.now();
@@ -211,8 +217,8 @@ public class ChatStreamHandler {
             String qaCacheKey = buildQaCacheKey(streamContext.repositoryId(), streamContext.repositoryVersion(), question);
             CachedQaAnswer cachedAnswer = getCachedQaAnswer(qaCacheKey);
             if (cachedAnswer != null) {
-                log.info("{} [CHAT] qaCacheHit=true sessionId={} repo={} savedEmbedAndLlm=true latencyMs={}",
-                        now(), sessionId, streamContext.repositoryId(), System.currentTimeMillis() - requestStartMs);
+                log.info("{} [CHAT] qaCacheHit=true tier={} sessionId={} repo={} savedEmbedAndLlm=true latencyMs={}",
+                        now(), queryTier, sessionId, streamContext.repositoryId(), System.currentTimeMillis() - requestStartMs);
                 heartbeat.cancel(false);
                 UUID assistantId = UUID.randomUUID();
                 Instant assistantCreatedAt = ensureAfter(userCreatedAt);
@@ -245,27 +251,51 @@ public class ChatStreamHandler {
             ));
             safeSend(emitter, sseLock, SseEmitter.event().name("user_message").data(userResponse));
 
-            stage.set("EMBED/VECTOR");
-            log.info("{} [EMBED] start sessionId={}", now(), sessionId);
-            Future<RetrievedContext> retrieval = ragExecutor.submit(
-                    () -> codeContextRetriever.retrieve(streamContext.userId(), streamContext.repositoryId(), question));
-
+            long ragStartMs = System.currentTimeMillis();
             RetrievedContext retrievedContext;
-            try {
-                retrievedContext = retrieval.get(EMBEDDING_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            } catch (Exception error) {
-                retrieval.cancel(true);
-                throw error;
-            }
-            log.info("{} [VECTOR] done sessionId={} dims={} citations={} elapsedMs={}",
-                    now(), sessionId, codeContextRetriever.embeddingDimensions(),
-                    retrievedContext.citations().size(), System.currentTimeMillis() - requestStartMs);
+            if (queryTier == ChatPromptBuilder.QueryTier.TRIVIAL) {
+                // Skip Cloudflare embedding + PgVector round-trip for simple greetings/acknowledgements
+                retrievedContext = new RetrievedContext(List.of(), "");
+            } else {
+                stage.set("EMBED/VECTOR");
+                int topK = queryTier == ChatPromptBuilder.QueryTier.SIMPLE ? 3 : RagSettings.TOP_K_CHUNKS;
+                int maxContextChars = switch (queryTier) {
+                    case SIMPLE -> 2200;
+                    case STANDARD -> 3200;
+                    default -> RagSettings.MAX_CONTEXT_CHARS;
+                };
+                log.info("{} [EMBED] start tier={} topK={} maxChars={} sessionId={}",
+                        now(), queryTier, topK, maxContextChars, sessionId);
+                Future<RetrievedContext> retrieval = ragExecutor.submit(
+                        () -> codeContextRetriever.retrieve(
+                                streamContext.userId(), streamContext.repositoryId(), question, topK, maxContextChars));
 
-            String systemPrompt = chatPromptBuilder.systemPrompt(streamContext.repositoryName());
-            String prompt = retrievedContext.citations().isEmpty()
-                    ? "No relevant code found, answering from general context.\n\n" + question
-                    : chatPromptBuilder.userPrompt(retrievedContext.contextText(), question);
+                try {
+                    retrievedContext = retrieval.get(EMBEDDING_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                } catch (Exception error) {
+                    retrieval.cancel(true);
+                    throw error;
+                }
+            }
+            long ragMs = System.currentTimeMillis() - ragStartMs;
+            log.info("{} [VECTOR] done tier={} sessionId={} dims={} citations={} sessionMs={} ragMs={} elapsedMs={}",
+                    now(), queryTier, sessionId, codeContextRetriever.embeddingDimensions(),
+                    retrievedContext.citations().size(), sessionMs, ragMs, System.currentTimeMillis() - requestStartMs);
+
+            String systemPrompt = chatPromptBuilder.systemPrompt(streamContext.repositoryName(), queryTier);
+            String prompt = queryTier == ChatPromptBuilder.QueryTier.TRIVIAL
+                    ? question
+                    : (retrievedContext.citations().isEmpty()
+                            ? "No relevant code found, answering from general context.\n\n" + question
+                            : chatPromptBuilder.userPrompt(retrievedContext.contextText(), question));
             int estInputTokens = (systemPrompt.length() + prompt.length()) / 4;
+
+            int targetMaxTokens = switch (queryTier) {
+                case TRIVIAL -> 120;
+                case SIMPLE -> Math.min(280, configuredMaxTokens);
+                case STANDARD -> Math.min(600, configuredMaxTokens);
+                case DEEP -> configuredMaxTokens;
+            };
 
             stage.set("AI");
             List<String> triedModels = new ArrayList<>();
@@ -277,11 +307,10 @@ public class ChatStreamHandler {
             StringBuilder fullReply = new StringBuilder();
             AtomicInteger tokenCount = new AtomicInteger(0);
             AtomicLong firstTokenMs = new AtomicLong(-1L);
-            boolean noRelevantCode = retrievedContext.citations().isEmpty();
+            boolean noRelevantCode = queryTier != ChatPromptBuilder.QueryTier.TRIVIAL
+                    && retrievedContext.citations().isEmpty();
 
-            List<String> models = Arrays.stream(configuredGroqModels.split(","))
-                    .map(String::trim).filter(model -> !model.isEmpty()).toList();
-            if (models.isEmpty()) models = List.of("openai/gpt-oss-20b", "llama-3.3-70b-versatile", "openai/gpt-oss-120b");
+            List<String> models = selectModelsForTier(queryTier);
 
             for (String model : models) {
                 if (isModelInCooldown(model)) {
@@ -291,13 +320,13 @@ public class ChatStreamHandler {
                 triedModels.add(model);
                 try {
                     String shortModel = shortModel(model);
-                    log.info("{} [AI] provider=Groq model={} modelId={} sessionId={} estInputTokens={}",
-                            now(), shortModel, model, sessionId, estInputTokens);
+                    log.info("{} [AI] provider=Groq tier={} model={} maxTokens={} sessionId={} estInputTokens={}",
+                            now(), queryTier, shortModel, targetMaxTokens, sessionId, estInputTokens);
                     long aiStartMs = System.currentTimeMillis();
 
                     OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
                             .model(model)
-                            .maxCompletionTokens(configuredMaxTokens);
+                            .maxCompletionTokens(targetMaxTokens);
                     if (model.contains("gpt-oss") && configuredReasoningEffort != null && !configuredReasoningEffort.isBlank()) {
                         optionsBuilder.reasoningEffort(configuredReasoningEffort.trim());
                     }
@@ -319,8 +348,9 @@ public class ChatStreamHandler {
                     successfulProvider = "Groq";
                     long aiMs = System.currentTimeMillis() - aiStartMs;
                     long totalMs = System.currentTimeMillis() - requestStartMs;
-                    log.info("{} [AI] success provider=Groq model={} sessionId={} estInputTokens={} tokenCount={} ttftMs={} aiMs={} totalMs={}",
-                            now(), shortModel, sessionId, estInputTokens, tokenCount.get(), firstTokenMs.get(), aiMs, totalMs);
+                    log.info("{} [AI] success provider=Groq tier={} model={} sessionId={} estInputTokens={} tokenCount={} sessionMs={} ragMs={} ttftMs={} aiMs={} totalMs={}",
+                            now(), queryTier, shortModel, sessionId, estInputTokens, tokenCount.get(),
+                            sessionMs, ragMs, firstTokenMs.get(), aiMs, totalMs);
                     break;
                 } catch (Exception modelError) {
                     if (anyTokenSent.get() || modelError instanceof UncheckedIOException) {
@@ -538,6 +568,47 @@ public class ChatStreamHandler {
                 emitter.complete();
             }
         } catch (Exception sendError) { emitter.completeWithError(sendError); }
+    }
+
+    private List<String> selectModelsForTier(ChatPromptBuilder.QueryTier tier) {
+        List<String> configured = Arrays.stream(configuredGroqModels.split(","))
+                .map(String::trim)
+                .filter(m -> !m.isEmpty())
+                .toList();
+        if (configured.isEmpty()) {
+            configured = List.of("llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-20b");
+        }
+        String fastModel = (configuredFastModel == null || configuredFastModel.isBlank())
+                ? "llama-3.1-8b-instant"
+                : configuredFastModel.trim();
+
+        List<String> ordered = new ArrayList<>();
+        if (tier == ChatPromptBuilder.QueryTier.TRIVIAL || tier == ChatPromptBuilder.QueryTier.SIMPLE) {
+            // Instant non-reasoning model first for sub-200ms TTFT on small/direct questions
+            ordered.add(fastModel);
+            for (String m : configured) {
+                if (!m.equals(fastModel)) {
+                    ordered.add(m);
+                }
+            }
+            return ordered;
+        }
+
+        // For STANDARD / DEEP queries, prefer non-reasoning fast models ahead of reasoning gpt-oss models
+        for (String m : configured) {
+            if (!m.contains("gpt-oss")) {
+                ordered.add(m);
+            }
+        }
+        if (ordered.isEmpty()) {
+            ordered.add("llama-3.3-70b-versatile");
+        }
+        for (String m : configured) {
+            if (!ordered.contains(m)) {
+                ordered.add(m);
+            }
+        }
+        return ordered;
     }
 
     private boolean isModelInCooldown(String model) {
