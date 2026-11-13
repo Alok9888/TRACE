@@ -166,7 +166,8 @@ export default function HomePage() {
             {
               index: "02",
               title: "VECTORIZE",
-              body: "Line-aligned code segments embedded at 384 dimensions and indexed in Postgres + pgvector.",
+              metric: "64× BATCH · 384-DIM",
+              body: "Cross-file 64-chunk batches over HNSW cosine indexes — 3.5× fewer inference round-trips per repository.",
             },
             {
               index: "03",
@@ -175,11 +176,16 @@ export default function HomePage() {
             },
           ].map((item) => (
             <div key={item.index} className="space-y-2.5">
-              <div className="flex items-center gap-3 font-mono text-[11px] tracking-[0.2em] text-muted-foreground">
-                <span>{item.index}</span>
-                <span className="h-px w-6 bg-border" />
-                <span className="font-heading text-xs font-semibold tracking-[0.18em] text-foreground">
-                  {item.title}
+              <div className="flex items-center justify-between gap-2 font-mono text-[11px] tracking-[0.2em] text-muted-foreground">
+                <div className="flex items-center gap-3">
+                  <span>{item.index}</span>
+                  <span className="h-px w-6 bg-border" />
+                  <span className="font-heading text-xs font-semibold tracking-[0.18em] text-foreground">
+                    {item.title}
+                  </span>
+                </div>
+                <span className="tabular-telemetry text-[10px] tracking-[0.14em] text-muted-foreground/75 uppercase">
+                  {item.metric}
                 </span>
               </div>
               <p className="text-xs leading-relaxed text-muted-foreground">
