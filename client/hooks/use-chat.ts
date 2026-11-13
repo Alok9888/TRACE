@@ -5,9 +5,10 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, type RefObject } from "react";
 
 import { api, type ChatMessage } from "@/lib/api";
+import type { ChatConfig } from "@/lib/chat-config";
 import { queryKeys } from "@/lib/query-keys";
 import { streamChatMessage } from "@/lib/stream-chat";
 import { toast } from "@/components/ui/toast";
@@ -49,7 +50,10 @@ export function useCreateChatSession(repositoryId: string) {
   });
 }
 
-export function useStreamChat(sessionId: string | null) {
+export function useStreamChat(
+  sessionId: string | null,
+  configRef?: RefObject<ChatConfig>
+) {
   const queryClient = useQueryClient();
   const [streaming, setStreaming] = useState(false);
   const [streamText, setStreamText] = useState("");
@@ -116,6 +120,7 @@ export function useStreamChat(sessionId: string | null) {
       try {
         await streamChatMessage(sessionId, content.trim(), {
           signal: controller.signal,
+          config: configRef?.current,
           onUserMessage: (message) => {
             queryClient.setQueryData<ChatMessage[]>(
               queryKeys.chat.messages(sessionId),
@@ -173,7 +178,7 @@ export function useStreamChat(sessionId: string | null) {
         setStreaming(false);
       }
     },
-    [sessionId, streaming, queryClient, clearPendingTokens, flushTokens]
+    [sessionId, streaming, queryClient, clearPendingTokens, flushTokens, configRef]
   );
 
   const retry = useCallback(() => { if (lastContent) void send(lastContent); }, [lastContent, send]);

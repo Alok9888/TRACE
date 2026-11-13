@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 
 import { ChatComposer } from "@/components/chat/chat-composer";
@@ -18,6 +18,11 @@ import {
   useStreamChat,
 } from "@/hooks/use-chat";
 import { useIndexStatus, useIndexStatusByUrl, useRepository } from "@/hooks/use-repos";
+import {
+  loadChatConfig,
+  saveChatConfig,
+  type ChatConfig,
+} from "@/lib/chat-config";
 
 export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: string }) {
   const [resolvedRepoId, setResolvedRepoId] = useState<string | null>(null);
@@ -80,8 +85,19 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
   const sessionId =
     selectedSessionId ?? sessionsQuery.data?.[0]?.id ?? null;
 
+  const [chatConfig, setChatConfig] = useState<ChatConfig>(() => loadChatConfig());
+  const chatConfigRef = useRef<ChatConfig>(chatConfig);
+  const handleConfigChange = useCallback((next: ChatConfig) => {
+    chatConfigRef.current = next;
+    setChatConfig(next);
+    saveChatConfig(next);
+  }, []);
+
   const messagesQuery = useChatMessages(sessionId);
-  const { send, stop, retry, streaming, streamText, streamError } = useStreamChat(sessionId);
+  const { send, stop, retry, streaming, streamText, streamError } = useStreamChat(
+    sessionId,
+    chatConfigRef
+  );
 
   // Track when streaming started for the 10s warning
   const [showLongWaitWarning, setShowLongWaitWarning] = useState(false);
@@ -247,6 +263,8 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
           repo={sidebarRepo}
           sessionId={sessionId}
           onSelectSession={setSelectedSessionId}
+          config={chatConfig}
+          onConfigChange={handleConfigChange}
         />
 
         <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

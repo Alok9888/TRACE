@@ -55,6 +55,10 @@ public class ChatController {
             HttpServletResponse response) {
         response.setHeader("Cache-Control", "no-cache, no-transform");
         response.setHeader("X-Accel-Buffering", "no");
-        return chatService.streamReply(workspaceContext.getWorkspaceId(), id, request.content());
+        return chatService.streamReply(
+                workspaceContext.getWorkspaceId(),
+                id,
+                request.content(),
+                request.toGenerationConfig());
     }
 }

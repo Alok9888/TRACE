@@ -197,3 +197,53 @@
 *::-webkit-scrollbar-thumb:hover {
   background-color: var(--muted-foreground);
 }
+
+/* Monochrome aerospace range slider for LLM & RAG parameters */
+.range-telemetry {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 16px;
+  background: transparent;
+  cursor: pointer;
+}
+.range-telemetry:focus {
+  outline: none;
+}
+.range-telemetry::-webkit-slider-runnable-track {
+  height: 2px;
+  background: var(--border);
+  border-radius: 0;
+}
+.range-telemetry::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  margin-top: -4px;
+  border-radius: 1px;
+  background: var(--foreground);
+  border: 1px solid var(--background);
+  transition: transform 120ms ease;
+}
+.range-telemetry:hover::-webkit-slider-thumb,
+.range-telemetry:focus-visible::-webkit-slider-thumb {
+  transform: scale(1.2);
+}
+.range-telemetry::-moz-range-track {
+  height: 2px;
+  background: var(--border);
+  border-radius: 0;
+}
+.range-telemetry::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--foreground);
+  border: 1px solid var(--background);
+  transition: transform 120ms ease;
+}
+.range-telemetry:hover::-moz-range-thumb,
+.range-telemetry:focus-visible::-moz-range-thumb {
+  transform: scale(1.2);
+}

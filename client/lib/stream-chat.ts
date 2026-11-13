@@ -1,4 +1,5 @@
 import { getStreamBaseUrl, getWorkspaceId, ApiError, type ChatMessage } from "@/lib/api";
+import type { ChatConfig } from "@/lib/chat-config";
 
 const RESPONSE_TIMEOUT_MS = 20_000;
 const STREAM_IDLE_TIMEOUT_MS = 25_000; // Matches backend retrieval + TTFT budget; backend also sends 4s keepalives
@@ -10,6 +11,7 @@ export type StreamChatHandlers = {
   onDone?: () => void;
   onError?: (error: Error) => void;
   onModel?: (model: string, fallback: boolean, provider?: string) => void;
+  config?: ChatConfig;
   signal?: AbortSignal;
 };
 
@@ -58,7 +60,18 @@ export async function streamChatMessage(
           Accept: "text/event-stream",
           "X-Workspace-Id": getWorkspaceId(),
         },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify(
+          handlers.config
+            ? {
+                content,
+                temperature: handlers.config.temperature,
+                maxTokens: handlers.config.maxTokens,
+                topK: handlers.config.topK,
+                similarityThreshold: handlers.config.similarityThreshold,
+                systemPrompt: handlers.config.systemPrompt.trim() || undefined,
+              }
+            : { content }
+        ),
         signal: controller.signal,
         cache: "no-store",
       }

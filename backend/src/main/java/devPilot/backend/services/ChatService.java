@@ -21,6 +21,7 @@ import devPilot.backend.exceptions.NotFoundException;
 import devPilot.backend.repository.ChatMessageRepository;
 import devPilot.backend.repository.ChatSessionRepository;
 import devPilot.backend.services.ai.ChatContextCache;
+import devPilot.backend.services.ai.ChatGenerationConfig;
 import devPilot.backend.services.ai.ChatStreamHandler;
 import devPilot.backend.services.ai.ChatStreamContext;
 import devPilot.backend.services.ai.CitationMapper;
@@ -91,9 +92,17 @@ public class ChatService {
     }
 
     public SseEmitter streamReply(UUID userId, UUID sessionId, String userContent) {
+        return streamReply(userId, sessionId, userContent, ChatGenerationConfig.defaults());
+    }
+
+    public SseEmitter streamReply(
+            UUID userId,
+            UUID sessionId,
+            String userContent,
+            ChatGenerationConfig config) {
         // Keep all database work inside the managed SSE task. Returning the emitter first
         // ensures lookup or pool delays cannot prevent the response from opening.
-        return chatStreamHandler.stream(sessionId, userContent,
+        return chatStreamHandler.stream(sessionId, userContent, config,
                 () -> prepareStreamContext(userId, sessionId));
     }
 

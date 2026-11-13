@@ -45,16 +45,33 @@ public class CodeContextRetriever {
     }
 
     public RetrievedContext retrieve(UUID userId, UUID repositoryId, String question) {
-        return retrieve(userId, repositoryId, question, RagSettings.TOP_K_CHUNKS, RagSettings.MAX_CONTEXT_CHARS);
+        return retrieve(
+                userId,
+                repositoryId,
+                question,
+                RagSettings.TOP_K_CHUNKS,
+                RagSettings.MAX_CONTEXT_CHARS,
+                RagSettings.SIMILARITY_THRESHOLD);
     }
 
     public RetrievedContext retrieve(UUID userId, UUID repositoryId, String question, int topK, int maxContextChars) {
+        return retrieve(userId, repositoryId, question, topK, maxContextChars, RagSettings.SIMILARITY_THRESHOLD);
+    }
+
+    public RetrievedContext retrieve(
+            UUID userId,
+            UUID repositoryId,
+            String question,
+            int topK,
+            int maxContextChars,
+            double similarityThreshold) {
         long startMs = System.currentTimeMillis();
         int effectiveTopK = Math.max(1, topK);
         int effectiveMaxChars = Math.max(400, maxContextChars);
+        double effectiveThreshold = Math.max(0.0, Math.min(1.0, similarityThreshold));
 
         log.info("{} [VECTOR] search start repo={} queryLength={} topK={} maxChars={} threshold={}",
-                Instant.now(), repositoryId, question.length(), effectiveTopK, effectiveMaxChars, RagSettings.SIMILARITY_THRESHOLD);
+                Instant.now(), repositoryId, question.length(), effectiveTopK, effectiveMaxChars, effectiveThreshold);
 
         List<Document> documents;
         String mode = "vector-store";
@@ -68,16 +85,16 @@ public class CodeContextRetriever {
                 embedMs = System.currentTimeMillis() - embedStart;
 
                 long dbStart = System.currentTimeMillis();
-                documents = directIndexedVectorSearch(userId, repositoryId, queryVector, effectiveTopK);
+                documents = directIndexedVectorSearch(userId, repositoryId, queryVector, effectiveTopK, effectiveThreshold);
                 dbMs = System.currentTimeMillis() - dbStart;
                 mode = "direct-sql";
             } catch (RuntimeException directError) {
                 log.warn("{} [VECTOR] direct indexed SQL failed repo={}, falling back to VectorStore: {}",
                         Instant.now(), repositoryId, directError.getMessage());
-                documents = searchViaVectorStore(userId, repositoryId, question, effectiveTopK);
+                documents = searchViaVectorStore(userId, repositoryId, question, effectiveTopK, effectiveThreshold);
             }
         } else {
-            documents = searchViaVectorStore(userId, repositoryId, question, effectiveTopK);
+            documents = searchViaVectorStore(userId, repositoryId, question, effectiveTopK, effectiveThreshold);
         }
 
         if (documents == null) {
@@ -85,7 +102,7 @@ public class CodeContextRetriever {
         }
         int rawCount = documents.size();
         List<Document> filtered = documents.stream()
-                .filter(doc -> doc.getScore() == null || doc.getScore() >= RagSettings.SIMILARITY_THRESHOLD)
+                .filter(doc -> doc.getScore() == null || doc.getScore() >= effectiveThreshold)
                 .toList();
 
         // Enforce context character budget tailored to query complexity
@@ -127,7 +144,7 @@ public class CodeContextRetriever {
         long totalMs = System.currentTimeMillis() - startMs;
         log.info("{} [VECTOR] done mode={} repo={} embedMs={} dbMs={} totalMs={} selected={} raw={} threshold={} estContextTokens={}",
                 Instant.now(), mode, repositoryId, embedMs, dbMs, totalMs,
-                selected.size(), rawCount, RagSettings.SIMILARITY_THRESHOLD, estContextTokens);
+                selected.size(), rawCount, effectiveThreshold, estContextTokens);
 
         return new RetrievedContext(citations, contextText);
     }
@@ -136,9 +153,14 @@ public class CodeContextRetriever {
      * Queries PgVector directly using the B-tree expression index on ((metadata->>'repoId'), (metadata->>'userId')).
      * Avoids Spring AI's `metadata::jsonb @@` cast across all rows and ANTLR filter parsing.
      */
-    private List<Document> directIndexedVectorSearch(UUID userId, UUID repositoryId, float[] queryVector, int topK) {
+    private List<Document> directIndexedVectorSearch(
+            UUID userId,
+            UUID repositoryId,
+            float[] queryVector,
+            int topK,
+            double similarityThreshold) {
         String vectorLiteral = toPgVectorLiteral(queryVector);
-        double maxDistance = 1.0 - RagSettings.SIMILARITY_THRESHOLD;
+        double maxDistance = 1.0 - similarityThreshold;
         String table = (vectorTableName == null || vectorTableName.isBlank()) ? "devpilot_vectors_cf_384" : vectorTableName;
 
         String sql = "SELECT content, metadata::text AS metadata_json, (1 - (embedding <=> ?::vector)) AS score "
@@ -171,14 +193,19 @@ public class CodeContextRetriever {
                 topK);
     }
 
-    private List<Document> searchViaVectorStore(UUID userId, UUID repositoryId, String question, int topK) {
+    private List<Document> searchViaVectorStore(
+            UUID userId,
+            UUID repositoryId,
+            String question,
+            int topK,
+            double similarityThreshold) {
         String filterExpression = RagSettings.METADATA_REPO_ID + " == '" + repositoryId
                 + "' && " + RagSettings.METADATA_USER_ID + " == '" + userId + "'";
 
         var search = SearchRequest.builder()
                 .query(question)
                 .topK(topK)
-                .similarityThreshold(RagSettings.SIMILARITY_THRESHOLD)
+                .similarityThreshold(similarityThreshold)
                 .filterExpression(filterExpression)
                 .build();
 

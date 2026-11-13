@@ -30,6 +30,7 @@ import java.util.function.Supplier;
 
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.google.genai.GoogleGenAiChatOptions;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -133,14 +134,25 @@ public class ChatStreamHandler {
             UUID requestedSessionId,
             String question,
             Supplier<ChatStreamContext> contextSupplier) {
+        return stream(requestedSessionId, question, ChatGenerationConfig.defaults(), contextSupplier);
+    }
 
+    public SseEmitter stream(
+            UUID requestedSessionId,
+            String question,
+            ChatGenerationConfig config,
+            Supplier<ChatStreamContext> contextSupplier) {
+
+        ChatGenerationConfig effectiveConfig = config != null ? config : ChatGenerationConfig.defaults();
         SseEmitter emitter = new SseEmitter(RagSettings.STREAM_TIMEOUT_MS);
         Object sseLock = new Object();
         AtomicBoolean terminalSent = new AtomicBoolean(false);
         AtomicBoolean cancelWorker = new AtomicBoolean(false);
         AtomicReference<Future<?>> workerTask = new AtomicReference<>();
         AtomicReference<String> stage = new AtomicReference<>("SESSION");
-        log.info("{} [CHAT] received sessionId={} content={}", now(), requestedSessionId, question);
+        log.info("{} [CHAT] received sessionId={} temp={} maxTokens={} topK={} threshold={} content={}",
+                now(), requestedSessionId, effectiveConfig.temperature(), effectiveConfig.maxTokens(),
+                effectiveConfig.topK(), effectiveConfig.similarityThreshold(), question);
         emitter.onTimeout(() -> {
             log.error("{} [SSE] timeout sessionId={} stage={}", now(), requestedSessionId, stage.get());
             sendError(emitter, sseLock, terminalSent, "Chat request timed out. Please try again.");
@@ -165,7 +177,7 @@ public class ChatStreamHandler {
             log.info("{} [SSE] sending stream-open sessionId={}", now(), requestedSessionId);
             safeSend(emitter, sseLock, SseEmitter.event().comment("connected"));
             Future<?> task = chatExecutor.submit(() -> runChat(
-                    emitter, sseLock, terminalSent, stage, requestedSessionId, question, contextSupplier));
+                    emitter, sseLock, terminalSent, stage, requestedSessionId, question, effectiveConfig, contextSupplier));
             workerTask.set(task);
             if (cancelWorker.get()) {
                 cancelTask(task);
@@ -184,6 +196,7 @@ public class ChatStreamHandler {
             AtomicReference<String> stage,
             UUID requestedSessionId,
             String question,
+            ChatGenerationConfig config,
             Supplier<ChatStreamContext> contextSupplier) {
         UUID sessionId = requestedSessionId;
         long requestStartMs = System.currentTimeMillis();
@@ -214,7 +227,8 @@ public class ChatStreamHandler {
                     userMessageId, MessageRole.USER, question, List.of(), userCreatedAt);
 
             // Check Q&A response cache immediately (0ms when ChatContextCache hits)
-            String qaCacheKey = buildQaCacheKey(streamContext.repositoryId(), streamContext.repositoryVersion(), question);
+            String qaCacheKey = buildQaCacheKey(
+                    streamContext.repositoryId(), streamContext.repositoryVersion(), question, config);
             CachedQaAnswer cachedAnswer = getCachedQaAnswer(qaCacheKey);
             if (cachedAnswer != null) {
                 log.info("{} [CHAT] qaCacheHit=true tier={} sessionId={} repo={} savedEmbedAndLlm=true latencyMs={}",
@@ -258,17 +272,28 @@ public class ChatStreamHandler {
                 retrievedContext = new RetrievedContext(List.of(), "");
             } else {
                 stage.set("EMBED/VECTOR");
-                int topK = queryTier == ChatPromptBuilder.QueryTier.SIMPLE ? 3 : RagSettings.TOP_K_CHUNKS;
-                int maxContextChars = switch (queryTier) {
+                int topK = config.customTopK()
+                        ? config.topK()
+                        : (queryTier == ChatPromptBuilder.QueryTier.SIMPLE ? Math.min(3, config.topK()) : config.topK());
+                int tierContextChars = switch (queryTier) {
                     case SIMPLE -> 2200;
                     case STANDARD -> 3200;
                     default -> RagSettings.MAX_CONTEXT_CHARS;
                 };
-                log.info("{} [EMBED] start tier={} topK={} maxChars={} sessionId={}",
-                        now(), queryTier, topK, maxContextChars, sessionId);
+                int maxContextChars = config.customTopK()
+                        ? Math.min(10_000, Math.max(tierContextChars, topK * 950))
+                        : tierContextChars;
+                double similarityThreshold = config.similarityThreshold();
+                log.info("{} [EMBED] start tier={} topK={} maxChars={} threshold={} sessionId={}",
+                        now(), queryTier, topK, maxContextChars, similarityThreshold, sessionId);
                 Future<RetrievedContext> retrieval = ragExecutor.submit(
                         () -> codeContextRetriever.retrieve(
-                                streamContext.userId(), streamContext.repositoryId(), question, topK, maxContextChars));
+                                streamContext.userId(),
+                                streamContext.repositoryId(),
+                                question,
+                                topK,
+                                maxContextChars,
+                                similarityThreshold));
 
                 try {
                     retrievedContext = retrieval.get(EMBEDDING_TIMEOUT_SECONDS, TimeUnit.SECONDS);
@@ -282,20 +307,29 @@ public class ChatStreamHandler {
                     now(), queryTier, sessionId, codeContextRetriever.embeddingDimensions(),
                     retrievedContext.citations().size(), sessionMs, ragMs, System.currentTimeMillis() - requestStartMs);
 
-            String systemPrompt = chatPromptBuilder.systemPrompt(streamContext.repositoryName(), queryTier);
+            String systemPrompt = chatPromptBuilder.systemPrompt(
+                    streamContext.repositoryName(), queryTier, config.systemPrompt());
             String prompt = queryTier == ChatPromptBuilder.QueryTier.TRIVIAL
                     ? question
                     : (retrievedContext.citations().isEmpty()
-                            ? "No relevant code found, answering from general context.\n\n" + question
+                            ? "No relevant code chunks matched the current similarity threshold.\n\nUser question:\n" + question
                             : chatPromptBuilder.userPrompt(retrievedContext.contextText(), question));
             int estInputTokens = (systemPrompt.length() + prompt.length()) / 4;
 
-            int targetMaxTokens = switch (queryTier) {
-                case TRIVIAL -> 120;
-                case SIMPLE -> Math.min(280, configuredMaxTokens);
-                case STANDARD -> Math.min(600, configuredMaxTokens);
-                case DEEP -> configuredMaxTokens;
-            };
+            int targetMaxTokens;
+            if (queryTier == ChatPromptBuilder.QueryTier.TRIVIAL) {
+                targetMaxTokens = Math.min(120, config.maxTokens());
+            } else if (config.customMaxTokens()) {
+                targetMaxTokens = config.maxTokens();
+            } else {
+                int baseMax = Math.min(config.maxTokens(), configuredMaxTokens);
+                targetMaxTokens = switch (queryTier) {
+                    case SIMPLE -> Math.min(280, baseMax);
+                    case STANDARD -> Math.min(600, baseMax);
+                    default -> baseMax;
+                };
+            }
+            double targetTemperature = config.temperature();
 
             stage.set("AI");
             List<String> triedModels = new ArrayList<>();
@@ -320,12 +354,13 @@ public class ChatStreamHandler {
                 triedModels.add(model);
                 try {
                     String shortModel = shortModel(model);
-                    log.info("{} [AI] provider=Groq tier={} model={} maxTokens={} sessionId={} estInputTokens={}",
-                            now(), queryTier, shortModel, targetMaxTokens, sessionId, estInputTokens);
+                    log.info("{} [AI] provider=Groq tier={} model={} temp={} maxTokens={} sessionId={} estInputTokens={}",
+                            now(), queryTier, shortModel, targetTemperature, targetMaxTokens, sessionId, estInputTokens);
                     long aiStartMs = System.currentTimeMillis();
 
                     OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
                             .model(model)
+                            .temperature(targetTemperature)
                             .maxCompletionTokens(targetMaxTokens);
                     if (model.contains("gpt-oss") && configuredReasoningEffort != null && !configuredReasoningEffort.isBlank()) {
                         optionsBuilder.reasoningEffort(configuredReasoningEffort.trim());
@@ -380,11 +415,17 @@ public class ChatStreamHandler {
                 try {
                     String geminiModel = "gemini-2.5-flash";
                     triedModels.add(geminiModel);
-                    log.info("{} [AI] provider=Gemini model={} last-resort fallback sessionId={} estInputTokens={}",
-                            now(), geminiModel, sessionId, estInputTokens);
+                    log.info("{} [AI] provider=Gemini model={} temp={} maxTokens={} last-resort fallback sessionId={} estInputTokens={}",
+                            now(), geminiModel, targetTemperature, targetMaxTokens, sessionId, estInputTokens);
                     long aiStartMs = System.currentTimeMillis();
 
+                    GoogleGenAiChatOptions.Builder geminiOptions = GoogleGenAiChatOptions.builder()
+                            .model(geminiModel)
+                            .temperature(targetTemperature)
+                            .maxOutputTokens(targetMaxTokens);
+
                     geminiFallbackChatClient.prompt()
+                            .options(geminiOptions)
                             .system(systemPrompt)
                             .user(prompt)
                             .stream()
@@ -693,9 +734,11 @@ public class ChatStreamHandler {
         return Instant.now().toString();
     }
 
-    private static String buildQaCacheKey(UUID repoId, String repoVersion, String question) {
+    private static String buildQaCacheKey(
+            UUID repoId, String repoVersion, String question, ChatGenerationConfig config) {
         String normalized = question == null ? "" : question.trim().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
-        return repoId + ":" + (repoVersion == null ? "v0" : repoVersion) + ":" + normalized;
+        String cfg = config == null ? ChatGenerationConfig.defaults().cacheKeySegment() : config.cacheKeySegment();
+        return repoId + ":" + (repoVersion == null ? "v0" : repoVersion) + ":" + cfg + ":" + normalized;
     }
 
     private CachedQaAnswer getCachedQaAnswer(String key) {

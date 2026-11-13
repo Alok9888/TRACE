@@ -65,36 +65,58 @@ public class ChatPromptBuilder {
     }
 
     public String systemPrompt(String repositoryFullName) {
-        return systemPrompt(repositoryFullName, QueryTier.STANDARD);
+        return systemPrompt(repositoryFullName, QueryTier.STANDARD, ChatGenerationConfig.DEFAULT_SYSTEM_PROMPT);
     }
 
     public String systemPrompt(String repositoryFullName, QueryTier tier) {
-        return switch (tier) {
+        return systemPrompt(repositoryFullName, tier, ChatGenerationConfig.DEFAULT_SYSTEM_PROMPT);
+    }
+
+    public String systemPrompt(String repositoryFullName, QueryTier tier, String customSystemPrompt) {
+        String basePrompt = switch (tier) {
             case TRIVIAL -> """
                     You are DevPilot, a concise technical assistant for the %s codebase.
                     Reply in 1 brief sentence. Do not invent code details.
                     """.formatted(repositoryFullName);
             case SIMPLE -> """
                     You are DevPilot, a concise technical assistant for the %s codebase.
-                    Use the provided code context when relevant; if not, answer briefly from general knowledge and note no matching code was found.
                     RESPONSE STYLE: Answer directly in 1 to 3 short sentences of plain prose.
                     Do NOT use markdown headings, multi-section templates, or bullet lists unless explicitly requested.
                     Cite exact file paths and line ranges inline when referencing code.
                     """.formatted(repositoryFullName);
             case STANDARD -> """
                     You are DevPilot, a concise technical assistant for the %s codebase.
-                    Use the provided code context when relevant; if not, answer from general knowledge and note no matching code was found.
                     RESPONSE STYLE: Match length to the question—use a short paragraph or 3 to 5 tight bullets.
                     Avoid filler introductions, redundant summaries, and unnecessary headings.
                     Cite exact file paths and line ranges inline. Include code only when directly helpful.
                     """.formatted(repositoryFullName);
             case DEEP -> """
                     You are DevPilot, an expert technical assistant for the %s codebase.
-                    Use the provided code context when relevant; if not, answer from general knowledge and note no matching code was found.
                     RESPONSE STYLE: Provide a clear, structured technical breakdown with concise headings or numbered steps.
                     Cite exact file paths and line ranges throughout. Keep every point concrete and free of filler.
                     """.formatted(repositoryFullName);
         };
+
+        String trimmedDirective = customSystemPrompt == null || customSystemPrompt.isBlank()
+                ? ChatGenerationConfig.DEFAULT_SYSTEM_PROMPT
+                : customSystemPrompt.trim();
+
+        if (tier == QueryTier.TRIVIAL) {
+            if (ChatGenerationConfig.DEFAULT_SYSTEM_PROMPT.equalsIgnoreCase(trimmedDirective)) {
+                return basePrompt;
+            }
+            return basePrompt + "\nUSER INSTRUCTION: " + trimmedDirective + "\n";
+        }
+
+        if (ChatGenerationConfig.DEFAULT_SYSTEM_PROMPT.equalsIgnoreCase(trimmedDirective)) {
+            return basePrompt
+                    + "\nGROUNDING RULE: " + trimmedDirective
+                    + " If the retrieved code context does not contain the answer, state clearly that it is not present in the indexed repository rather than guessing.\n";
+        }
+
+        return basePrompt
+                + "\nUSER INSTRUCTION (prioritize this tone, framing, and focus): " + trimmedDirective
+                + "\nGround claims in the provided code context when available, and cite file paths and line ranges.\n";
     }
 
     public String userPrompt(String codeContext, String question) {

@@ -21,6 +21,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import devPilot.backend.config.EmbeddingConfig;
 import devPilot.backend.repository.RepositoryRepository;
+import devPilot.backend.services.ai.ChatGenerationConfig;
 import devPilot.backend.services.ai.ChatPromptBuilder;
 import devPilot.backend.services.ai.CitationMapper;
 import devPilot.backend.services.ai.CodeContextRetriever;
@@ -249,5 +250,52 @@ class RagOptimizationsTest {
 
         String deepPrompt = builder.systemPrompt("owner/repo", ChatPromptBuilder.QueryTier.DEEP);
         assertTrue(deepPrompt.contains("structured technical breakdown"));
+    }
+
+    @Test
+    void customGenerationConfigClampsAndAppliesToRetrievalAndPrompt() {
+        ChatGenerationConfig defaults = ChatGenerationConfig.defaults();
+        assertEquals(0.2, defaults.temperature(), 0.0001);
+        assertEquals(1024, defaults.maxTokens());
+        assertEquals(5, defaults.topK());
+        assertEquals(0.35, defaults.similarityThreshold(), 0.0001);
+        assertEquals("Answer from repo code only.", defaults.systemPrompt());
+        assertFalse(defaults.customMaxTokens());
+        assertFalse(defaults.customTopK());
+
+        // Out-of-range inputs are strictly clamped
+        ChatGenerationConfig clamped = ChatGenerationConfig.from(1.8, 9999, 25, -0.5, "  Explain like senior engineer  ");
+        assertEquals(1.0, clamped.temperature(), 0.0001);
+        assertEquals(4096, clamped.maxTokens());
+        assertEquals(10, clamped.topK());
+        assertEquals(0.0, clamped.similarityThreshold(), 0.0001);
+        assertEquals("Explain like senior engineer", clamped.systemPrompt());
+        assertTrue(clamped.customMaxTokens());
+        assertTrue(clamped.customTopK());
+        assertNotEquals(defaults.cacheKeySegment(), clamped.cacheKeySegment());
+
+        // Retriever honors custom topK & similarityThreshold
+        VectorStore vectorStore = mock(VectorStore.class);
+        CitationMapper citationMapper = mock(CitationMapper.class);
+        JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
+        CodeContextRetriever retriever = new CodeContextRetriever(vectorStore, citationMapper, jdbcTemplate);
+
+        Document highDoc = Document.builder().text("// File: a.ts\nexport const a = 1;").score(0.82).build();
+        Document midDoc = Document.builder().text("// File: b.ts\nexport const b = 2;").score(0.55).build();
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(highDoc, midDoc));
+        when(citationMapper.fromDocument(any())).thenReturn(new devPilot.backend.dto.CitationDto("a.ts", 1, 2, "ts"));
+
+        var ctx = retriever.retrieve(UUID.randomUUID(), UUID.randomUUID(), "where is a?", 8, 6000, 0.70);
+        ArgumentCaptor<SearchRequest> reqCaptor = ArgumentCaptor.forClass(SearchRequest.class);
+        verify(vectorStore).similaritySearch(reqCaptor.capture());
+        assertEquals(8, reqCaptor.getValue().getTopK());
+        assertEquals(0.70, reqCaptor.getValue().getSimilarityThreshold(), 0.0001);
+        assertTrue(ctx.contextText().contains("export const a = 1"));
+        assertFalse(ctx.contextText().contains("export const b = 2"), "Score 0.55 below 0.70 threshold must be filtered out");
+
+        // Prompt builder includes user system prompt directive
+        ChatPromptBuilder promptBuilder = new ChatPromptBuilder();
+        String customSys = promptBuilder.systemPrompt("owner/repo", ChatPromptBuilder.QueryTier.STANDARD, clamped.systemPrompt());
+        assertTrue(customSys.contains("Explain like senior engineer"));
     }
 }
