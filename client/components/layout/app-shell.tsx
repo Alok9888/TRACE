@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { usePathname } from "next/navigation";
 
-import { DevPilotIcon } from "@/components/icons/devpilot-icon";
+import { TraceIcon } from "@/components/icons/trace-icon";
 
 import { Button } from "@/components/ui/button";
 import { ModeToggle } from "@/components/ui/mode-toggle";
@@ -60,13 +60,13 @@ export function AppShell({
               <SidebarMenuButton
                 size="lg"
                 render={<Link href="/dashboard" />}
-                tooltip="DEVPILOT"
+                tooltip="TRACE"
                 className="rounded-[2px]"
               >
-                <DevPilotIcon className="size-7" />
+                <TraceIcon className="size-7" />
                 <div className="grid flex-1 text-left leading-tight">
                   <span className="truncate font-heading text-xs font-semibold tracking-[0.22em] uppercase">
-                    DevPilot
+                    TRACE
                   </span>
                   <span className="truncate font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
                     Mission Control
@@ -129,7 +129,7 @@ export function AppShell({
                 render={<Link href="/" />}
                 className="rounded-[2px] font-mono text-[11px] tracking-[0.12em] text-muted-foreground uppercase hover:text-foreground"
               >
-                <DevPilotIcon className="size-4" />
+                <TraceIcon className="size-4" />
                 <span>Launch Console</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
@@ -179,9 +179,9 @@ export function BrandMark({ className }: { className?: string }) {
         className
       )}
     >
-      <DevPilotIcon className="size-7" />
+      <TraceIcon className="size-7" />
       <span className="font-heading text-sm font-semibold tracking-[0.24em] uppercase leading-none">
-        DevPilot
+        TRACE
       </span>
     </div>
   );

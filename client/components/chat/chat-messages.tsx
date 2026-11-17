@@ -58,7 +58,7 @@ const MessageRow = memo(function MessageRow({
       <div className="flex w-full items-center justify-between gap-2">
         <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
           <span className="size-1.5 rounded-full bg-foreground/75" />
-          <span>DEVPILOT // TELEMETRY</span>
+          <span>TRACE // TELEMETRY</span>
         </div>
         <button
           type="button"
@@ -186,7 +186,7 @@ export function ChatMessages({
             <div className="flex flex-col items-start gap-2">
               <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
                 <span className="size-1.5 animate-pulse rounded-full bg-foreground" />
-                <span>DEVPILOT // RECEIVING</span>
+                <span>TRACE // RECEIVING</span>
               </div>
               <div className="flex flex-wrap items-center gap-3 border-l border-foreground/40 py-1 pl-4 font-mono text-xs text-muted-foreground">
                 <span>{LOADING_MESSAGES[loadingMessageIndex]}</span>
@@ -203,7 +203,7 @@ export function ChatMessages({
             <div className="flex flex-col items-start gap-2">
               <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
                 <span className="size-1.5 animate-pulse rounded-full bg-foreground" />
-                <span>DEVPILOT // STREAMING</span>
+                <span>TRACE // STREAMING</span>
               </div>
               <div className="w-full border-l border-foreground/45 pl-4">
                 <ChatMarkdown content={streamText} isStreaming />

@@ -12,11 +12,11 @@
         <relativePath/>
     </parent>
 
-    <groupId>devPilot</groupId>
+    <groupId>trace</groupId>
     <artifactId>backend</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>devPilot-backend</name>
-    <description>DevPilot Backend</description>
+    <name>trace-backend</name>
+    <description>TRACE Backend</description>
 
     <properties>
         <java.version>21</java.version>

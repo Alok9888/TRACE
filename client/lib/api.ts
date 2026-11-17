@@ -66,7 +66,7 @@ export class ApiError extends Error {
   }
 }
 
-const WORKSPACE_ID_KEY = "devpilot-workspace-id";
+const WORKSPACE_ID_KEY = "trace-workspace-id";
 
 export function getWorkspaceId(): string {
   if (typeof window === "undefined") return "";
@@ -87,7 +87,7 @@ export function getStreamBaseUrl() {
   // Direct backend origin for SSE streaming so reverse proxies never buffer or cut off live token streams
   return (
     process.env.NEXT_PUBLIC_API_BASE_URL ||
-    "https://devpilot-backend-iso1.onrender.com"
+    "https://trace-backend.onrender.com"
   ).replace(/\/$/, "");
 }
 

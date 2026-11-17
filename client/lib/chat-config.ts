@@ -22,7 +22,7 @@ export const DEFAULT_CHAT_CONFIG: ChatConfig = {
   systemPrompt: "Answer from repo code only.",
 };
 
-const STORAGE_KEY = "devpilot.chat.config.v1";
+const STORAGE_KEY = "trace.chat.config.v1";
 
 function clamp(val: number, min: number, max: number): number {
   if (!Number.isFinite(val)) return min;

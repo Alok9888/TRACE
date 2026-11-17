@@ -1,10 +1,10 @@
-# DevPilot system design
+# TRACE system design
 
 This document describes the application as it exists in the repository, including important limitations. It is intended as a map for understanding and debugging the system, not as a claim that every production concern is already implemented.
 
 ## 1. What the product does
 
-DevPilot accepts a public GitHub repository, downloads eligible source files through the GitHub API, splits the files into chunks, creates embeddings through NVIDIA's OpenAI-compatible API, and stores those vectors in PostgreSQL with pgvector. A user asks a question in chat; the backend embeds the question, retrieves similar chunks, sends those chunks and the question to Groq chat, and streams the answer and citations back to the browser.
+TRACE accepts a public GitHub repository, downloads eligible source files through the GitHub API, splits the files into chunks, creates embeddings through Cloudflare Workers AI (with optional NVIDIA fallback), and stores those vectors in PostgreSQL with pgvector. A user asks a question in chat; the backend embeds the question, retrieves similar chunks, sends those chunks and the question to Groq chat, and streams the answer and citations back to the browser.
 
 ## 2. System at a glance
 
@@ -119,7 +119,7 @@ That means a blank/loading/error chat page can originate before any chat model c
 5. Once the repository loads, check status endpoint and whether indexing reached `READY`.
 6. Only after a session exists, diagnose the SSE request and model calls.
 
-In the latest checked source, `client/next.config.ts` rewrites `/backend/*` to `https://devpilot-backend-iso1.onrender.com` unless `NEXT_PUBLIC_API_BASE_URL` overrides it. `ChatView` depends on that backend for its first repository request.
+In the latest checked source, `client/next.config.ts` rewrites `/backend/*` to `https://trace-backend.onrender.com` unless `NEXT_PUBLIC_API_BASE_URL` overrides it. `ChatView` depends on that backend for its first repository request.
 
 ## 6. Runtime configuration
 

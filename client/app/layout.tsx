@@ -32,12 +32,12 @@ const jetbrainsMono = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "DEVPILOT // Codebase Mission Control",
+  title: "TRACE // Codebase Mission Control",
   description: "Analyze public GitHub repositories and interrogate codebases with precision RAG telemetry.",
 };
 
 const backendOrigin = (
-  process.env.NEXT_PUBLIC_API_BASE_URL || "https://devpilot-backend-iso1.onrender.com"
+  process.env.NEXT_PUBLIC_API_BASE_URL || "https://trace-backend.onrender.com"
 ).replace(/\/$/, "");
 
 export default function RootLayout({
