@@ -9,7 +9,14 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowDown, ArrowRight, ArrowUp, ArrowUpRight, Mail } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowRight,
+  ArrowUp,
+  ArrowUpRight,
+  ChevronDown,
+  Mail,
+} from "lucide-react";
 
 import { BrandMark } from "@/components/layout/app-shell";
 import {
@@ -30,83 +37,85 @@ import { api } from "@/lib/api";
 const CHAPTERS = [
   { id: "hero", num: "01", label: "Launch" },
   { id: "architecture", num: "02", label: "Pipeline" },
-  { id: "latency", num: "03", label: "Runtime" },
+  { id: "latency", num: "03", label: "Benchmarks" },
   { id: "edge", num: "04", label: "Edge" },
   { id: "signature", num: "05", label: "Author" },
 ] as const;
 
-const HERO_SPECS = [
+const SAMPLE_REPOS = [
+  { label: "sindresorhus/ow", url: "https://github.com/sindresorhus/ow" },
+  { label: "colinhacks/zod", url: "https://github.com/colinhacks/zod" },
+  { label: "expressjs/express", url: "https://github.com/expressjs/express" },
+] as const;
+
+const BENCHMARK_CARDS = [
   {
-    index: "01",
-    title: "INGEST",
-    metric: "1-PASS · 0 RE-EMBEDS",
-    body: "Single-pass archive streaming on virtual threads. Skips 100% of unchanged files on re-index.",
+    code: "01",
+    label: "Embed Calls",
+    before: "108",
+    from: 108,
+    to: 31,
+    suffix: "",
+    note: "3.5× fewer per repo",
+    barPct: "29%",
   },
   {
-    index: "02",
-    title: "VECTORIZE",
-    metric: "64× BATCH · 384-DIM",
-    body: "Cross-file 64-chunk batches over HNSW cosine indexes — 3.5× fewer inference round-trips.",
+    code: "02",
+    label: "Re-Embed Waste",
+    before: "100%",
+    from: 100,
+    to: 0,
+    suffix: "%",
+    note: "Unchanged files skipped",
+    barPct: "4%",
   },
   {
-    index: "03",
-    title: "INTERROGATE",
-    metric: "4-TIER · 5 MODELS",
-    body: "Adaptive retrieval with 5-model failover, streaming answers locked to exact file:line ranges.",
+    code: "03",
+    label: "Session Lookup",
+    before: "Sync DB",
+    from: 85,
+    to: 0,
+    suffix: " ms",
+    note: "In-memory cache hit",
+    barPct: "4%",
+  },
+  {
+    code: "04",
+    label: "JVM Heap",
+    before: "512 MB",
+    from: 512,
+    to: 160,
+    suffix: " MB",
+    note: "60 fps streamed UI",
+    barPct: "32%",
   },
 ] as const;
 
-const LATENCY_PILLARS = [
-  {
-    code: "RT-01",
-    label: "4-TIER QUERY ROUTING",
-    body: "Trivial turns skip RAG (0 ms). Direct lookups hit llama-3.1-8b-instant in 1–3 sentences; architectural traces scale context to llama-3.3-70b-versatile.",
-  },
-  {
-    code: "RT-02",
-    label: "ZERO-BLOCKING SSE PATH",
-    body: "Streams open immediately with 4 s heartbeats. ChatContextCache validates sessions in 0 ms while messages persist off-path via batched JDBC.",
-  },
-  {
-    code: "RT-03",
-    label: "5-MODEL CIRCUIT BREAKER",
-    body: "Per-model cooldowns (429 → 5 m, 503 → 60 s) step across four Groq models down to Gemini 2.5 Flash without retrying degraded endpoints.",
-  },
-] as const;
-
-const BENCHMARKS = [
-  { label: "Embedding Calls (1,934 chunks)", before: "108", from: 108, to: 31, suffix: " (3.5×)", barPct: "29%" },
-  { label: "Unchanged File Re-Embeds", before: "100%", from: 100, to: 0, suffix: "%", barPct: "4%" },
-  { label: "Pre-RAG Session Lookup", before: "Sync DB", from: 85, to: 0, suffix: " ms", barPct: "4%" },
-  { label: "Client Stream Frame Cap", before: "Per token", from: 0, to: 60, suffix: " fps rAF", barPct: "100%" },
-  { label: "JVM Heap Envelope", before: "Unbounded", from: 512, to: 160, suffix: " MB", barPct: "32%" },
-] as const;
-
-const EDGE_POINTS = [
+const EDGE_ROWS = [
   {
     num: "01",
-    title: "Zero Auth Friction",
-    tag: "INSTANT ENTRY",
-    body: "Paste any public repository URL and interrogate it immediately. Workspace isolation runs via scoped headers—no OAuth walls or org approvals.",
+    title: "Zero Auth",
+    summary: "Paste any public repo. Instant access.",
+    tag: "NO OAUTH",
   },
   {
     num: "02",
-    title: "Exposed RAG & LLM Controls",
-    tag: "5 LIVE KNOBS",
-    body: "Temperature, Max Tokens (256–4096), Top-K (1–10), Similarity Threshold (0–1), and System Prompt sit beside chat and execute directly in SQL and provider calls.",
+    title: "5 Live Knobs",
+    summary: "Temperature, tokens, Top-K, threshold, prompt.",
+    tag: "EXPOSED RAG",
     showKnobPreview: true,
   },
   {
     num: "03",
-    title: "Verifiable Source Coordinates",
-    tag: "FILE:LINE LOCKED",
-    body: "Every embedded segment retains file path and exact line bounds. Responses anchor to clickable GitHub line ranges rather than ungrounded summaries.",
+    title: "Line Citations",
+    summary: "Every answer links directly to file and line.",
+    tag: "VERIFIABLE",
   },
   {
     num: "04",
-    title: "Proportional Responses",
-    tag: "NO ESSAY WALLS",
-    body: "Answer depth follows question complexity. A config lookup returns two direct sentences; an end-to-end trace returns a structured walkthrough.",
+    title: "Adaptive Depth",
+    summary: "Short lookups stay short. Traces go deep.",
+    tag: "4-TIER",
   },
 ] as const;
 
@@ -115,7 +124,6 @@ export default function HomePage() {
   const [error, setError] = useState("");
   const [isClicked, setIsClicked] = useState(false);
 
-  // Active chapter (0..4) + active pipeline scrollytelling beat (0..3)
   const [activeChapter, setActiveChapter] = useState(0);
   const [activeBeat, setActiveBeat] = useState(0);
   const [revealed, setRevealed] = useState<boolean[]>([true, true, false, false, false]);
@@ -131,7 +139,7 @@ export default function HomePage() {
   const earthBgRef = useRef<HTMLImageElement>(null);
 
   const chapterStopsRef = useRef<(HTMLElement | null)[]>([null, null, null, null, null]);
-  const beatStopsRef = useRef<(HTMLDivElement | null)[]>([null, null, null, null]);
+  const beatStopsRef = useRef<(HTMLDivElement | null)[]>([null, null, null]);
 
   const reducedMotion = usePrefersReducedMotion();
   const router = useRouter();
@@ -141,7 +149,7 @@ export default function HomePage() {
     void fetch("/backend/api/health", { cache: "no-store" }).catch(() => {});
   }, []);
 
-  // Continuous 60fps scroll-driven telemetry: progress rail, parallax depth, and scrollytelling beats
+  // Continuous 60fps scroll-driven telemetry: progress rail, parallax depth, and 3-beat scrollytelling
   useEffect(() => {
     const root = scrollRootRef.current;
     if (!root) return;
@@ -155,33 +163,29 @@ export default function HomePage() {
       const maxScroll = Math.max(1, root.scrollHeight - vh);
       const globalProgress = Math.min(1, Math.max(0, scrollTop / maxScroll));
 
-      // 1px top telemetry progress bar (0 React re-renders)
       if (progressBarRef.current) {
         progressBarRef.current.style.transform = `scaleX(${globalProgress})`;
       }
 
-      // Continuous scrollytelling spine progress across the 400dvh track (scrollTop 1vh..4vh)
+      // Pipeline track spans 1vh..3vh (3 beats: 0, 1, 2)
+      const beatCount = PIPELINE_BEATS.length;
       const beatFloat = (scrollTop - vh) / vh;
-      const clampedBeatProgress = Math.min(1, Math.max(0, beatFloat / (PIPELINE_BEATS.length - 1)));
+      const clampedBeatProgress = Math.min(1, Math.max(0, beatFloat / (beatCount - 1)));
       if (spineProgressRef.current) {
-        spineProgressRef.current.style.transform = `scaleY(${0.15 + clampedBeatProgress * 0.85})`;
+        spineProgressRef.current.style.transform = `scaleY(${0.2 + clampedBeatProgress * 0.8})`;
       }
 
-      // Determine active beat (0..3) and active chapter (0..4)
-      const nextBeat = Math.min(
-        PIPELINE_BEATS.length - 1,
-        Math.max(0, Math.round(beatFloat))
-      );
+      const nextBeat = Math.min(beatCount - 1, Math.max(0, Math.round(beatFloat)));
       setActiveBeat((prev) => (prev === nextBeat ? prev : nextBeat));
 
       let nextChapter = 0;
       if (scrollTop < vh * 0.55) {
         nextChapter = 0;
-      } else if (scrollTop < vh * 4.55) {
+      } else if (scrollTop < vh * (beatCount + 0.55)) {
         nextChapter = 1;
-      } else if (scrollTop < vh * 5.55) {
+      } else if (scrollTop < vh * (beatCount + 1.55)) {
         nextChapter = 2;
-      } else if (scrollTop < vh * 6.55) {
+      } else if (scrollTop < vh * (beatCount + 2.55)) {
         nextChapter = 3;
       } else {
         nextChapter = 4;
@@ -195,7 +199,6 @@ export default function HomePage() {
         return copy;
       });
 
-      // Subtle GPU-composited parallax on real monochrome photography
       if (!reducedMotion) {
         if (heroBgRef.current) {
           const heroDelta = Math.min(1.2, Math.max(-0.5, scrollTop / vh));
@@ -206,8 +209,8 @@ export default function HomePage() {
           orbitalBgRef.current.style.transform = `translate3d(0, ${(orbDelta - 0.5) * -36}px, 0) scale(${1.05 + orbDelta * 0.06})`;
         }
         if (earthBgRef.current) {
-          const sigDelta = (scrollTop - vh * 7) / vh;
-          earthBgRef.current.style.transform = `translate3d(0, ${sigDelta * -32}px, 0) scale(${1.04 + Math.abs(sigDelta) * 0.04})`;
+          const sigOffset = (scrollTop - vh * (beatCount + 3)) / vh;
+          earthBgRef.current.style.transform = `translate3d(0, ${sigOffset * -32}px, 0) scale(${1.04 + Math.abs(sigOffset) * 0.04})`;
         }
       }
     };
@@ -269,16 +272,16 @@ export default function HomePage() {
     heroStageRef.current.style.setProperty("--hero-my", `${e.clientY - rect.top}px`);
   }
 
-  function analyze() {
+  function launchUrl(rawUrl: string) {
     if (hasClickedRef.current) return;
 
-    if (!repoUrl.trim()) {
+    if (!rawUrl.trim()) {
       inputRef.current?.focus();
       setError("Enter a valid GitHub repository URL");
       return;
     }
 
-    const match = repoUrl.trim().match(/github\.com\/([^/]+)\/([^/?#]+)/i);
+    const match = rawUrl.trim().match(/github\.com\/([^/]+)\/([^/?#]+)/i);
     if (!match) {
       hasClickedRef.current = false;
       setIsClicked(false);
@@ -301,7 +304,7 @@ export default function HomePage() {
 
   return (
     <div className="relative h-[100dvh] w-full overflow-hidden bg-background text-foreground">
-      {/* Fixed top mission bar + razor-thin live scroll progress beam */}
+      {/* Minimal fixed navbar + 1px scroll progress beam */}
       <header className="fixed inset-x-0 top-0 z-40 h-14 border-b border-border/80 bg-background/75 backdrop-blur-md">
         <div className="mx-auto flex h-full w-full max-w-6xl items-center justify-between px-4 sm:px-6">
           <button
@@ -317,12 +320,8 @@ export default function HomePage() {
             <span className="tabular-telemetry hidden font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase md:inline">
               {CHAPTERS[activeChapter]?.num} / 0{CHAPTERS.length} ·{" "}
               {activeChapter === 1
-                ? `PIPELINE ${PIPELINE_BEATS[activeBeat]?.step}/04`
+                ? PIPELINE_BEATS[activeBeat]?.shortLabel
                 : CHAPTERS[activeChapter]?.label}
-            </span>
-            <span className="hidden items-center gap-2 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase sm:inline-flex">
-              <span className="size-1.5 animate-pulse rounded-full bg-foreground/85" />
-              SYS // NOMINAL
             </span>
             <Link
               href="/dashboard"
@@ -334,7 +333,6 @@ export default function HomePage() {
             <ModeToggle />
           </div>
         </div>
-        {/* Continuous 1px scroll telemetry beam */}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-transparent">
           <div
             ref={progressBarRef}
@@ -344,7 +342,7 @@ export default function HomePage() {
         </div>
       </header>
 
-      {/* Whisper-quiet right-edge navigation rail (desktop) */}
+      {/* Right-edge chapter rail (desktop) */}
       <nav
         aria-label="Page sections"
         className="fixed top-1/2 right-5 z-30 hidden -translate-y-1/2 flex-col items-end gap-3 lg:flex"
@@ -387,7 +385,7 @@ export default function HomePage() {
         className="h-[100dvh] w-full snap-y snap-mandatory overflow-x-hidden overflow-y-auto scroll-smooth"
       >
         {/* =====================================================================
-            SECTION 01 — HERO (100dvh)
+            SECTION 01 — HERO (100dvh, zero clutter, mobile-first 1-tap try)
            ===================================================================== */}
         <section
           id="hero"
@@ -398,7 +396,6 @@ export default function HomePage() {
           onPointerMove={handleHeroPointerMove}
           className="relative flex h-[100dvh] w-full snap-start snap-always flex-col overflow-hidden pt-14"
         >
-          {/* Monochrome SpaceX launch backdrop with smooth scroll parallax + cursor light */}
           <div className="pointer-events-none absolute inset-0 overflow-hidden select-none">
             <img
               ref={heroBgRef}
@@ -407,38 +404,33 @@ export default function HomePage() {
               aria-hidden="true"
               className="h-full w-full scale-[1.03] object-cover object-[72%_35%] opacity-[0.22] contrast-125 will-change-transform sm:object-right-bottom dark:opacity-[0.32] [mask-image:radial-gradient(ellipse_80%_75%_at_75%_55%,black_25%,transparent_100%)]"
             />
-            <div className="mission-grid absolute inset-0 opacity-60" />
+            <div className="mission-grid absolute inset-0 opacity-55" />
             <div className="hero-spotlight absolute inset-0 transition-opacity duration-500" />
           </div>
 
-          <main className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col justify-between px-4 py-6 sm:px-6 sm:py-10 md:py-12">
-            <div className="max-w-2xl space-y-4 pt-2 sm:space-y-6 sm:pt-4 md:pt-8">
-              <div className="space-y-2.5 sm:space-y-4">
-                <p
-                  className="hero-mask-reveal font-mono text-[10px] tracking-[0.22em] text-muted-foreground uppercase sm:text-[11px]"
-                  style={{ animationDelay: "40ms" }}
-                >
-                  00 // CODEBASE TELEMETRY ENGINE
-                </p>
+          <main className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col justify-between px-4 py-6 sm:px-6 sm:py-10">
+            <div />
+
+            {/* Clean centered/editorial focal stack */}
+            <div className="max-w-2xl space-y-6 sm:space-y-8">
+              <div className="space-y-3 sm:space-y-4">
                 <h1
-                  className="hero-mask-reveal font-heading text-[2rem] leading-[1.02] font-semibold tracking-[0.04em] uppercase sm:text-5xl lg:text-6xl"
-                  style={{ animationDelay: "120ms" }}
+                  className="hero-mask-reveal font-heading text-[2.4rem] leading-[0.98] font-semibold tracking-[0.04em] uppercase sm:text-6xl lg:text-[4.5rem]"
+                  style={{ animationDelay: "60ms" }}
                 >
                   Interrogate Any Repository.
                 </h1>
                 <p
-                  className="hero-mask-reveal max-w-lg text-xs leading-relaxed text-muted-foreground sm:text-base"
-                  style={{ animationDelay: "210ms" }}
+                  className="hero-mask-reveal max-w-md text-sm leading-relaxed text-muted-foreground sm:text-lg"
+                  style={{ animationDelay: "150ms" }}
                 >
-                  Stream public GitHub source trees into vector space and query architecture,
-                  execution paths, and symbols with line-level citations.
+                  Paste a GitHub URL. Get line-cited answers in seconds.
                 </p>
               </div>
 
-              {/* Launch command input bar */}
               <div
-                className="hero-mask-reveal space-y-2.5 pt-1 sm:space-y-3 sm:pt-2"
-                style={{ animationDelay: "300ms" }}
+                className="hero-mask-reveal space-y-3"
+                style={{ animationDelay: "230ms" }}
               >
                 <div className="group/bar flex flex-col border border-input bg-background/85 backdrop-blur-sm transition-all duration-200 hover:border-foreground/50 focus-within:border-foreground sm:flex-row">
                   <div className="flex min-w-0 flex-1 items-center">
@@ -453,17 +445,17 @@ export default function HomePage() {
                         if (error) setError("");
                       }}
                       onKeyDown={(event) => {
-                        if (event.key === "Enter") analyze();
+                        if (event.key === "Enter") launchUrl(repoUrl);
                       }}
                       placeholder="https://github.com/owner/repository"
                       aria-label="GitHub repository URL"
-                      className="h-11 min-w-0 flex-1 bg-transparent px-3 font-mono text-xs tracking-wide text-foreground outline-none placeholder:text-muted-foreground/60 sm:h-12 sm:px-4 sm:text-sm"
+                      className="h-12 min-w-0 flex-1 bg-transparent px-3 font-mono text-xs tracking-wide text-foreground outline-none placeholder:text-muted-foreground/60 sm:px-4 sm:text-sm"
                     />
                   </div>
                   <Button
                     variant="outline"
                     size="lg"
-                    onClick={analyze}
+                    onClick={() => launchUrl(repoUrl)}
                     disabled={isClicked}
                     className={`h-11 rounded-none border-0 border-t border-input bg-transparent px-7 text-foreground transition-all duration-200 hover:bg-foreground hover:text-background sm:h-12 sm:border-t-0 sm:border-l ${
                       isClicked ? "pointer-events-none opacity-60" : ""
@@ -477,66 +469,61 @@ export default function HomePage() {
                     />
                   </Button>
                 </div>
+
                 {error ? (
                   <p role="alert" className="font-mono text-xs tracking-wide text-destructive">
                     ERR // {error}
                   </p>
                 ) : (
-                  <p className="font-mono text-[10px] tracking-[0.12em] text-muted-foreground/80 uppercase sm:text-[11px]">
-                    PUBLIC REPOSITORIES · ZERO AUTH REQUIRED · PRESS ENTER TO INITIATE
-                  </p>
+                  /* 1-tap sample repos — huge UX win on mobile where typing URLs is slow */
+                  <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                    <span className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground/75 uppercase">
+                      Try:
+                    </span>
+                    {SAMPLE_REPOS.map((sample) => (
+                      <button
+                        key={sample.label}
+                        type="button"
+                        onClick={() => {
+                          setRepoUrl(sample.url);
+                          setError("");
+                          inputRef.current?.focus();
+                        }}
+                        className="rounded-[2px] border border-border/80 bg-background/60 px-2.5 py-1 font-mono text-[10px] tracking-[0.04em] text-muted-foreground transition-colors hover:border-foreground hover:text-foreground"
+                      >
+                        {sample.label}
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
             </div>
 
-            {/* Bottom tactile spec strip + kinetic scroll cue */}
-            <div className="space-y-4 sm:space-y-6">
-              <div className="grid gap-2.5 border-t border-border/80 pt-4 sm:gap-5 sm:pt-5 md:grid-cols-3">
-                {HERO_SPECS.map((item) => (
-                  <SpotlightCard
-                    key={item.index}
-                    className="group space-y-1 border border-transparent px-2.5 py-2 sm:space-y-2 sm:px-3 sm:py-2.5"
-                  >
-                    <div className="flex items-center justify-between gap-2 font-mono text-[10px] tracking-[0.2em] text-muted-foreground sm:text-[11px]">
-                      <div className="flex items-center gap-2.5">
-                        <span className="transition-colors group-hover:text-foreground">
-                          {item.index}
-                        </span>
-                        <span className="h-px w-5 bg-border transition-all duration-300 group-hover:w-7 group-hover:bg-foreground/70" />
-                        <span className="font-heading text-xs font-semibold tracking-[0.18em] text-foreground">
-                          {item.title}
-                        </span>
-                      </div>
-                      <span className="tabular-telemetry text-[9px] tracking-[0.12em] text-muted-foreground/75 uppercase transition-colors group-hover:text-foreground/90 sm:text-[10px]">
-                        {item.metric}
-                      </span>
-                    </div>
-                    <p className="text-[11px] leading-relaxed text-muted-foreground sm:text-xs">
-                      {item.body}
-                    </p>
-                  </SpotlightCard>
-                ))}
-              </div>
-
-              <div className="flex items-center justify-between">
-                <button
-                  type="button"
-                  onClick={() => scrollToChapter(1)}
-                  className="group inline-flex items-center gap-2 font-mono text-[10px] tracking-[0.2em] text-muted-foreground uppercase transition-colors hover:text-foreground"
-                >
-                  <span>Unfold Pipeline</span>
-                  <ArrowDown className="scroll-cue-pulse size-3" />
-                </button>
-                <span className="hidden font-mono text-[10px] tracking-[0.16em] text-muted-foreground/60 uppercase sm:inline">
-                  SCROLL TO EXPLORE
+            {/* Eager, attention-grabbing scroll-down indicator */}
+            <div className="flex justify-center pt-4">
+              <button
+                type="button"
+                onClick={() => scrollToChapter(1)}
+                className="group inline-flex items-center gap-3.5 rounded-[2px] border border-foreground/35 bg-background/80 px-5 py-2.5 font-mono text-[10px] font-medium tracking-[0.2em] text-foreground uppercase backdrop-blur-md transition-all duration-200 hover:border-foreground hover:bg-foreground hover:text-background"
+              >
+                <span className="relative h-4 w-px overflow-hidden bg-border group-hover:bg-background/30">
+                  <span className="scroll-drop-beam absolute inset-x-0 top-0 h-2 bg-foreground group-hover:bg-background" />
                 </span>
-              </div>
+
+                <span>Scroll · See How It Works</span>
+
+                <span className="flex flex-col -space-y-2" aria-hidden="true">
+                  <ChevronDown className="scroll-chevron size-3" />
+                  <ChevronDown className="scroll-chevron scroll-chevron-2 size-3" />
+                  <ChevronDown className="scroll-chevron scroll-chevron-3 size-3" />
+                </span>
+              </button>
             </div>
           </main>
         </section>
 
         {/* =====================================================================
-            SECTION 02 — SCROLLYTELLING CHAPTER: THE PIPELINE (4 pinned 100dvh beats)
+            SECTION 02 — SCROLLYTELLING PIPELINE (3 pinned 100dvh beats)
            ===================================================================== */}
         <PipelineScrollytelling
           activeBeat={activeBeat}
@@ -548,7 +535,7 @@ export default function HomePage() {
         />
 
         {/* =====================================================================
-            SECTION 03 — UNDER THE HOOD II: RUNTIME & BENCHMARKS (100dvh)
+            SECTION 03 — BENCHMARKS (100dvh, bold 2x2 spec grid, zero essay)
            ===================================================================== */}
         <section
           id="latency"
@@ -560,93 +547,67 @@ export default function HomePage() {
           <div className="mission-grid pointer-events-none absolute inset-0 opacity-40" />
 
           <div className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col justify-between px-4 py-6 sm:px-6 sm:py-10 md:py-12">
-            <Reveal visible={revealed[2]} className="max-w-2xl space-y-2 sm:space-y-3">
-              <p className="font-mono text-[10px] tracking-[0.22em] text-muted-foreground uppercase sm:text-[11px]">
-                02 // UNDER THE HOOD — RUNTIME
+            <Reveal visible={revealed[2]} className="space-y-1.5">
+              <p className="font-mono text-[10px] tracking-[0.22em] text-muted-foreground uppercase">
+                02 // BENCHMARKS
               </p>
-              <h2 className="font-heading text-2xl leading-[1.06] font-semibold tracking-[0.04em] uppercase sm:text-4xl lg:text-5xl">
-                Latency cut at every hop.
+              <h2 className="font-heading text-2xl leading-[1.04] font-semibold tracking-[0.04em] uppercase sm:text-4xl lg:text-5xl">
+                Fast by architecture.
               </h2>
             </Reveal>
 
-            <div className="grid items-start gap-4 lg:grid-cols-12 lg:gap-8">
-              {/* Left: Interactive hover runtime pillars */}
-              <div className="space-y-2.5 sm:space-y-3.5 lg:col-span-6">
-                {LATENCY_PILLARS.map((item, i) => (
-                  <Reveal key={item.label} visible={revealed[2]} delay={80 + i * 75}>
-                    <SpotlightCard className="group border border-border/75 bg-card/55 px-3.5 py-3 sm:px-4 sm:py-3.5">
-                      <div className="flex items-center justify-between gap-2 font-mono text-[10px] tracking-[0.16em] uppercase sm:text-[11px]">
-                        <span className="font-medium text-foreground">{item.label}</span>
-                        <span className="text-[9px] text-muted-foreground/70 transition-colors group-hover:text-foreground">
-                          {item.code}
-                        </span>
-                      </div>
-                      <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground sm:text-xs">
-                        {item.body}
-                      </p>
-                    </SpotlightCard>
-                  </Reveal>
-                ))}
-              </div>
+            {/* Spacious 2x2 high-contrast telemetry grid — effortless to scan on mobile & desktop */}
+            <div className="grid grid-cols-2 gap-3 sm:gap-5">
+              {BENCHMARK_CARDS.map((card, idx) => (
+                <Reveal key={card.code} visible={revealed[2]} delay={70 + idx * 75}>
+                  <SpotlightCard className="group flex h-full flex-col justify-between border border-border/80 bg-card/70 p-4 sm:p-6">
+                    <div className="flex items-center justify-between gap-2 font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+                      <span>{card.label}</span>
+                      <span className="tabular-telemetry line-through opacity-55">
+                        {card.before}
+                      </span>
+                    </div>
 
-              {/* Right: Animated Count-Up & Metric Bars Ledger */}
-              <Reveal visible={revealed[2]} delay={200} className="lg:col-span-6">
-                <SpotlightCard className="border border-border/80 bg-card/70">
-                  <div className="grid grid-cols-[1.4fr_0.65fr_0.95fr] border-b border-border/80 px-3.5 py-2 font-mono text-[9px] tracking-[0.18em] text-muted-foreground uppercase sm:px-4 sm:py-2.5 sm:text-[10px]">
-                    <span>Metric</span>
-                    <span>Before</span>
-                    <span className="text-right text-foreground">After</span>
-                  </div>
-                  <div className="divide-y divide-border/60">
-                    {BENCHMARKS.map((row, idx) => (
+                    <div className="my-3 sm:my-5">
+                      <p className="font-heading text-3xl leading-none font-semibold tracking-[0.02em] text-foreground sm:text-5xl lg:text-6xl">
+                        <AnimatedNumber
+                          from={card.from}
+                          to={card.to}
+                          suffix={card.suffix}
+                          active={revealed[2]}
+                          reducedMotion={reducedMotion}
+                        />
+                      </p>
+                      <p className="mt-2 font-mono text-[10px] tracking-[0.1em] text-muted-foreground uppercase sm:text-[11px]">
+                        {card.note}
+                      </p>
+                    </div>
+
+                    <div className="h-[2px] w-full bg-border/50">
                       <div
-                        key={row.label}
-                        className="group space-y-1.5 px-3.5 py-2 transition-colors hover:bg-foreground/[0.03] sm:px-4 sm:py-2.5"
-                      >
-                        <div className="grid grid-cols-[1.4fr_0.65fr_0.95fr] items-center gap-2 font-mono text-[10px] sm:text-xs">
-                          <span className="truncate text-muted-foreground transition-colors group-hover:text-foreground">
-                            {row.label}
-                          </span>
-                          <span className="tabular-telemetry text-muted-foreground/60 line-through decoration-border">
-                            {row.before}
-                          </span>
-                          <span className="text-right font-medium text-foreground transition-transform duration-200 group-hover:-translate-x-0.5">
-                            <AnimatedNumber
-                              from={row.from}
-                              to={row.to}
-                              suffix={row.suffix}
-                              active={revealed[2]}
-                              reducedMotion={reducedMotion}
-                            />
-                          </span>
-                        </div>
-                        <div className="h-[2px] w-full bg-border/50">
-                          <div
-                            data-visible={revealed[2] ? "true" : "false"}
-                            style={{
-                              width: row.barPct,
-                              transitionDelay: `${260 + idx * 80}ms`,
-                            }}
-                            className="metric-bar-fill h-full bg-foreground/75"
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </SpotlightCard>
-              </Reveal>
+                        data-visible={revealed[2] ? "true" : "false"}
+                        style={{
+                          width: card.barPct,
+                          transitionDelay: `${220 + idx * 80}ms`,
+                        }}
+                        className="metric-bar-fill h-full bg-foreground/80"
+                      />
+                    </div>
+                  </SpotlightCard>
+                </Reveal>
+              ))}
             </div>
 
             <Reveal
               visible={revealed[2]}
-              delay={340}
-              className="flex items-center justify-between border-t border-border/70 pt-3 font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase sm:pt-4"
+              delay={320}
+              className="flex items-center justify-between border-t border-border/70 pt-3 font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase"
             >
-              <span>MEASURED ON PRODUCTION INDEXING &amp; SSE TRACES</span>
+              <span>4-TIER ROUTING · 5-MODEL FAILOVER</span>
               <button
                 type="button"
                 onClick={() => scrollToChapter(3)}
-                className="group inline-flex items-center gap-1.5 text-foreground/80 transition-colors hover:text-foreground"
+                className="group inline-flex items-center gap-1.5 text-foreground/85 transition-colors hover:text-foreground"
               >
                 <span>The Edge</span>
                 <ArrowDown className="size-3 transition-transform duration-200 group-hover:translate-y-0.5" />
@@ -656,7 +617,7 @@ export default function HomePage() {
         </section>
 
         {/* =====================================================================
-            SECTION 04 — THE EDGE (100dvh)
+            SECTION 04 — THE EDGE (100dvh, crisp 4-row hairline spec list)
            ===================================================================== */}
         <section
           id="edge"
@@ -668,53 +629,46 @@ export default function HomePage() {
           <div className="mission-grid pointer-events-none absolute inset-0 opacity-35" />
 
           <div className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col justify-between px-4 py-6 sm:px-6 sm:py-10 md:py-12">
-            <Reveal visible={revealed[3]} className="max-w-2xl space-y-2 sm:space-y-3">
-              <p className="font-mono text-[10px] tracking-[0.22em] text-muted-foreground uppercase sm:text-[11px]">
-                03 // THE EDGE
+            <Reveal visible={revealed[3]} className="space-y-1.5">
+              <p className="font-mono text-[10px] tracking-[0.22em] text-muted-foreground uppercase">
+                03 // WHY TRACE
               </p>
-              <h2 className="font-heading text-2xl leading-[1.06] font-semibold tracking-[0.04em] uppercase sm:text-4xl lg:text-5xl">
-                Precision over black-box wrappers.
+              <h2 className="font-heading text-2xl leading-[1.04] font-semibold tracking-[0.04em] uppercase sm:text-4xl lg:text-5xl">
+                No black box.
               </h2>
-              <p className="text-xs leading-relaxed text-muted-foreground sm:text-sm">
-                Most repository chat tools hide retrieval knobs behind generic presets and
-                answer one-line lookups with five-section essays. TRACE treats retrieval as a
-                transparent engineering instrument.
-              </p>
             </Reveal>
 
-            <div className="grid gap-2.5 sm:grid-cols-2 sm:gap-4">
-              {EDGE_POINTS.map((point, i) => (
-                <Reveal key={point.num} visible={revealed[3]} delay={80 + i * 75}>
-                  <SpotlightCard className="group flex h-full flex-col justify-between border border-border/80 bg-card/60 p-3.5 sm:p-5">
-                    <div>
-                      <div className="flex items-center justify-between gap-2 font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase">
-                        <span className="transition-colors group-hover:text-foreground">
-                          {point.num}
-                        </span>
-                        <span className="border border-border/80 px-2 py-0.5 text-[9px] text-foreground/75 transition-colors duration-200 group-hover:border-foreground group-hover:bg-foreground group-hover:text-background">
-                          {point.tag}
-                        </span>
+            {/* 4 crisp horizontal tactile rows — scans in 2 seconds, generous mobile breathing room */}
+            <div className="divide-y divide-border/70 border-y border-border/80">
+              {EDGE_ROWS.map((row, idx) => (
+                <Reveal key={row.num} visible={revealed[3]} delay={70 + idx * 65}>
+                  <SpotlightCard className="group flex flex-col gap-2 px-3 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6 sm:px-5 sm:py-5">
+                    <div className="flex items-baseline gap-3 sm:gap-5">
+                      <span className="font-mono text-[10px] tracking-[0.18em] text-muted-foreground transition-colors group-hover:text-foreground">
+                        {row.num}
+                      </span>
+                      <div>
+                        <h3 className="font-heading text-base font-semibold tracking-[0.06em] text-foreground uppercase sm:text-xl">
+                          {row.title}
+                        </h3>
+                        <p className="mt-0.5 text-xs text-muted-foreground sm:text-sm">
+                          {row.summary}
+                        </p>
                       </div>
-                      <h3 className="mt-2 font-heading text-xs font-semibold tracking-[0.1em] text-foreground uppercase sm:text-sm">
-                        {point.title}
-                      </h3>
-                      <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground sm:text-xs">
-                        {point.body}
-                      </p>
                     </div>
 
-                    {"showKnobPreview" in point && point.showKnobPreview && (
-                      <div className="mt-3 hidden items-center gap-3 border-t border-border/60 pt-2.5 font-mono text-[9px] tracking-[0.12em] text-muted-foreground uppercase sm:flex">
-                        <span>TEMP 0.20</span>
-                        <div className="relative h-px flex-1 bg-border">
-                          <span className="absolute top-1/2 left-[20%] size-2 -translate-y-1/2 bg-foreground transition-all duration-500 ease-out group-hover:left-[68%]" />
+                    <div className="flex items-center justify-between gap-4 pl-7 sm:justify-end sm:pl-0">
+                      {"showKnobPreview" in row && row.showKnobPreview && (
+                        <div className="hidden w-28 items-center gap-2 font-mono text-[9px] text-muted-foreground md:flex">
+                          <div className="relative h-px flex-1 bg-border">
+                            <span className="absolute top-1/2 left-[22%] size-2 -translate-y-1/2 bg-foreground transition-all duration-500 ease-out group-hover:left-[76%]" />
+                          </div>
                         </div>
-                        <span>TOP-K 5</span>
-                        <div className="relative h-px flex-1 bg-border">
-                          <span className="absolute top-1/2 left-[50%] size-2 -translate-y-1/2 bg-foreground transition-all duration-500 ease-out group-hover:left-[80%]" />
-                        </div>
-                      </div>
-                    )}
+                      )}
+                      <span className="shrink-0 border border-border/80 px-2.5 py-1 font-mono text-[10px] tracking-[0.14em] text-foreground/80 uppercase transition-colors duration-200 group-hover:border-foreground group-hover:bg-foreground group-hover:text-background">
+                        {row.tag}
+                      </span>
+                    </div>
                   </SpotlightCard>
                 </Reveal>
               ))}
@@ -722,8 +676,8 @@ export default function HomePage() {
 
             <Reveal
               visible={revealed[3]}
-              delay={360}
-              className="flex flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-3 sm:pt-4"
+              delay={320}
+              className="flex flex-wrap items-center justify-between gap-3 pt-2"
             >
               <div className="flex items-center gap-5">
                 <button
@@ -731,7 +685,7 @@ export default function HomePage() {
                   onClick={() => scrollToChapter(0, true)}
                   className="group relative inline-flex items-center gap-1.5 font-mono text-[10px] font-medium tracking-[0.16em] text-foreground uppercase"
                 >
-                  <span>Index a Repository</span>
+                  <span>Try a Repo</span>
                   <ArrowUp className="size-3 transition-transform duration-200 group-hover:-translate-y-0.5" />
                   <span className="absolute -bottom-1 left-0 h-px w-full origin-left scale-x-0 bg-foreground transition-transform duration-300 group-hover:scale-x-100" />
                 </button>
@@ -749,7 +703,7 @@ export default function HomePage() {
                 onClick={() => scrollToChapter(4)}
                 className="group inline-flex items-center gap-1.5 font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase transition-colors hover:text-foreground"
               >
-                <span>Signature</span>
+                <span>Author</span>
                 <ArrowDown className="size-3 transition-transform duration-200 group-hover:translate-y-0.5" />
               </button>
             </Reveal>
@@ -774,11 +728,10 @@ export default function HomePage() {
               aria-hidden="true"
               className="h-full w-full scale-105 object-cover object-center opacity-[0.06] contrast-125 will-change-transform dark:opacity-[0.11] [mask-image:radial-gradient(ellipse_60%_60%_at_50%_55%,black_15%,transparent_100%)]"
             />
-            {/* Whisper-quiet slow rotating orbital hairline ring */}
             <svg
               aria-hidden="true"
               viewBox="0 0 600 600"
-              className="orbital-spin absolute top-1/2 left-1/2 size-[440px] -translate-x-1/2 -translate-y-1/2 opacity-[0.14] sm:size-[560px]"
+              className="orbital-spin absolute top-1/2 left-1/2 size-[360px] -translate-x-1/2 -translate-y-1/2 opacity-[0.14] sm:size-[540px]"
             >
               <circle
                 cx="300"
@@ -807,7 +760,7 @@ export default function HomePage() {
             <div className="mx-auto flex max-w-xl flex-col items-center space-y-6 text-center">
               <Reveal visible={revealed[4]} className="space-y-2.5">
                 <p className="font-mono text-[10px] tracking-[0.24em] text-muted-foreground uppercase">
-                  04 // END OF TELEMETRY
+                  04 // TRACE
                 </p>
                 <div className="mx-auto h-px w-10 bg-border" />
               </Reveal>

@@ -386,6 +386,48 @@
   animation: trace-scroll-pulse 2.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }
 
+/* Eager cascading scroll-down indicator for hero */
+@keyframes trace-chevron-cascade {
+  0% {
+    opacity: 0.18;
+    transform: translateY(-2px);
+  }
+  45% {
+    opacity: 1;
+    transform: translateY(2px);
+  }
+  100% {
+    opacity: 0.18;
+    transform: translateY(4px);
+  }
+}
+.scroll-chevron {
+  animation: trace-chevron-cascade 1.35s cubic-bezier(0.25, 0.1, 0.25, 1) infinite;
+}
+.scroll-chevron-2 {
+  animation-delay: 160ms;
+}
+.scroll-chevron-3 {
+  animation-delay: 320ms;
+}
+
+@keyframes trace-drop-line {
+  0% {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(220%);
+    opacity: 0;
+  }
+}
+.scroll-drop-beam {
+  animation: trace-drop-line 1.6s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
 @keyframes trace-caret-blink {
   0%, 49% {
     opacity: 1;
@@ -417,6 +459,8 @@
   }
   .orbital-spin,
   .scroll-cue-pulse,
+  .scroll-chevron,
+  .scroll-drop-beam,
   .trace-caret {
     animation: none !important;
   }
