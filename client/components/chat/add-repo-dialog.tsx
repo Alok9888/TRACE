@@ -47,14 +47,15 @@ export function AddRepoDialog({
       return;
     }
 
+    const canonicalUrl = `https://github.com/${parsed.owner}/${parsed.name}`;
     // Create slug from owner-name (hyphen, not slash) for immediate navigation
     const slug = `${parsed.owner}-${parsed.name}`.toLowerCase();
 
     // Navigate to chat page IMMEDIATELY - no await
-    router.push(`/chat/${slug}?url=${encodeURIComponent(repoUrl)}`);
+    router.push(`/chat/${slug}?url=${encodeURIComponent(canonicalUrl)}`);
 
     // Fire POST /api/analyze in background
-    api.analyzeRepo(repoUrl).then(repo => {
+    api.analyzeRepo(canonicalUrl).then(repo => {
       // Update cache when done
       queryClient.setQueryData<Repository[]>(queryKeys.repos.list(), (old) => {
         if (!old) return [repo];

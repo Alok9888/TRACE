@@ -105,6 +105,7 @@ export async function apiFetch<T>(
   init?: RequestInit,
 ): Promise<T> {
   const res = await fetch(`${getApiBaseUrl()}${path}`, {
+    cache: "no-store",
     ...init,
     credentials: "include",
     headers: {

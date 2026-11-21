@@ -6,6 +6,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.regex.Pattern;
 
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -87,7 +88,11 @@ public class RepoController {
     }
 
     @GetMapping("/analyze/status")
-    public IndexStatusResponse analyzeStatus(@RequestParam String url, @RequestParam(required = false) UUID repoId) {
+    public IndexStatusResponse analyzeStatus(
+            @RequestParam String url,
+            @RequestParam(required = false) UUID repoId,
+            HttpServletResponse response) {
+        response.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
         UUID workspaceId = workspaceContext.getWorkspaceId();
         if (repoId != null) {
             return repoService.status(repoId, workspaceId);
@@ -100,7 +105,8 @@ public class RepoController {
     }
 
     @GetMapping("/{id}")
-    public RepositoryResponse get(@PathVariable UUID id) {
+    public RepositoryResponse get(@PathVariable UUID id, HttpServletResponse response) {
+        response.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
         return repoService.getResponse(id, workspaceContext.getWorkspaceId());
     }
 
@@ -113,7 +119,8 @@ public class RepoController {
     }
 
     @GetMapping("/{id}/status")
-    public IndexStatusResponse status(@PathVariable UUID id) {
+    public IndexStatusResponse status(@PathVariable UUID id, HttpServletResponse response) {
+        response.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
         return repoService.status(id, workspaceContext.getWorkspaceId());
     }
 

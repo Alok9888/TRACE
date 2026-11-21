@@ -142,6 +142,7 @@ public class RepoService {
             repo.setIndexStatus(IndexStatus.INDEXING);
             repo.setIndexingStage("creating");
             repo.setIndexingDetail("Creating repo row...");
+            repo.setUpdatedAt(Instant.now());
             return new AnalyzeDecision(repositoryRepository.save(repo), true);
         }
     }
@@ -212,10 +213,29 @@ public class RepoService {
 
             repo = repositoryRepository.save(repo);
 
+            // If we matched an existing row by githubRepoId instead of the placeholder row, delete the orphan placeholder
+            if (repoId != null && !repoId.equals(repo.getId())) {
+                try {
+                    repositoryRepository.deleteById(repoId);
+                } catch (Exception cleanupErr) {
+                    log.warn("Could not delete placeholder repo row {}: {}", repoId, cleanupErr.getMessage());
+                }
+            }
+
             // Repo row is already persisted with IndexStatus.INDEXING; trigger async indexing directly
             indexingService.indexAsync(repo.getId(), userId, force);
         } catch (Exception e) {
             log.error("Background analyze failed for {}/{}: {}", owner, name, e.getMessage(), e);
+            if (repoId != null) {
+                repositoryRepository.findByIdAndUserId(repoId, userId).ifPresent(failedRepo -> {
+                    failedRepo.setIndexStatus(IndexStatus.FAILED);
+                    failedRepo.setIndexingStage("failed");
+                    failedRepo.setIndexingDetail("Failed to analyze repository");
+                    failedRepo.setErrorMessage(e.getMessage());
+                    failedRepo.setUpdatedAt(Instant.now());
+                    repositoryRepository.save(failedRepo);
+                });
+            }
         } finally {
             analyzeTasks.remove(taskKey);
         }
@@ -236,12 +256,6 @@ public class RepoService {
                     null
             );
         }
-        IndexStatusResponse status = matches.get(0);
-        if ("creating".equals(status.indexingStage())) {
-            return new IndexStatusResponse(
-                    null, IndexStatus.INDEXING, 0, 0, 0, 0, 0,
-                    "creating", "Creating repo row...", null, null);
-        }
-        return status;
+        return matches.get(0);
     }
 }

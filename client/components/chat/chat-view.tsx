@@ -46,15 +46,15 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
   const shouldPollStatus = Boolean(effectiveRepoId) && repoQuery.data?.indexStatus !== "READY";
   const repoStatusQuery = useIndexStatus(effectiveRepoId, shouldPollStatus);
 
-  // Choose which status to use
-  const statusQuery = initialUrl && !effectiveRepoId ? urlStatusQuery : repoStatusQuery;
+  // Preserve last known status across the handoff from URL polling to repoId polling so UI never flashes back to "creating"
+  const latestStatus = repoStatusQuery.data ?? urlStatusQuery.data;
   useEffect(() => {
     if (urlStatusQuery.data?.repositoryId) {
       setResolvedRepoId(urlStatusQuery.data.repositoryId);
     }
   }, [urlStatusQuery.data?.repositoryId]);
 
-  const statusIndex = statusQuery.data?.indexStatus;
+  const statusIndex = latestStatus?.indexStatus;
   const repositoryIndex = repoQuery.data?.indexStatus;
   const indexStatus = statusIndex === "READY" || repositoryIndex === "READY"
     ? "READY"
@@ -147,22 +147,22 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
     return {
       ...repo,
       indexStatus: indexStatus ?? repo.indexStatus,
-      filesProcessed: statusQuery.data?.filesProcessed ?? repo.filesProcessed,
-      filesTotal: statusQuery.data?.filesTotal ?? repo.filesTotal,
-      chunkCount: statusQuery.data?.chunkCount ?? repo.chunkCount,
-      errorMessage: statusQuery.data?.errorMessage ?? repo.errorMessage,
+      filesProcessed: latestStatus?.filesProcessed ?? repo.filesProcessed,
+      filesTotal: latestStatus?.filesTotal ?? repo.filesTotal,
+      chunkCount: latestStatus?.chunkCount ?? repo.chunkCount,
+      errorMessage: latestStatus?.errorMessage ?? repo.errorMessage,
     };
   }, [
     repo,
     indexStatus,
-    statusQuery.data?.filesProcessed,
-    statusQuery.data?.filesTotal,
-    statusQuery.data?.chunkCount,
-    statusQuery.data?.errorMessage,
+    latestStatus?.filesProcessed,
+    latestStatus?.filesTotal,
+    latestStatus?.chunkCount,
+    latestStatus?.errorMessage,
   ]);
 
   // Calculate values based on stage for proper progress
-  const urlStatus = statusQuery.data;
+  const urlStatus = latestStatus;
 
   // Calculate files/total for progress based on source
   const filesTotal = urlStatus?.filesTotal ?? repo?.filesTotal ?? 0;
@@ -269,7 +269,7 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
 
         <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {!ready ? (
-            <IndexingState repo={repo} status={statusQuery.data} />
+            <IndexingState repo={repo} status={latestStatus} />
           ) : (
             <>
               <ChatMessages

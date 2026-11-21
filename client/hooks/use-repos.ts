@@ -43,6 +43,7 @@ export function useRepository(
     queryKey: queryKeys.repos.detail(repoId),
     queryFn: () => api.getRepo(repoId),
     enabled: Boolean(repoId) && (options?.enabled ?? true),
+    staleTime: 0,
     retry: 2,
     refetchOnWindowFocus: (query) =>
       !query.state.data || query.state.data.indexStatus !== "READY",
@@ -58,6 +59,9 @@ export function useIndexStatus(repoId: string, enabled = false) {
     queryKey: queryKeys.repos.status(repoId),
     queryFn: () => api.indexStatus(repoId),
     enabled: Boolean(repoId) && enabled,
+    staleTime: 0,
+    gcTime: 0,
+    refetchIntervalInBackground: true,
     refetchOnWindowFocus: (query) =>
       query.state.data?.indexStatus !== "READY" && query.state.data?.indexStatus !== "FAILED",
     refetchInterval: (query) =>
@@ -72,6 +76,9 @@ export function useIndexStatusByUrl(url: string, enabled = false) {
     queryKey: queryKeys.repos.statusByUrl(url),
     queryFn: () => api.indexStatusByUrl(url),
     enabled: Boolean(url) && enabled,
+    staleTime: 0,
+    gcTime: 0,
+    refetchIntervalInBackground: true,
     refetchOnWindowFocus: (query) =>
       query.state.data?.indexStatus !== "READY" && query.state.data?.indexStatus !== "FAILED",
     refetchInterval: (query) =>

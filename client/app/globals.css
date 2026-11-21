@@ -247,3 +247,42 @@
 .range-telemetry:focus-visible::-moz-range-thumb {
   transform: scale(1.2);
 }
+
+/* Restrained scroll-triggered reveals for landing viewports */
+.reveal-item {
+  opacity: 0;
+  transform: translate3d(0, 16px, 0);
+  transition:
+    opacity 680ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 680ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+}
+.reveal-item[data-visible="true"] {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+}
+
+@keyframes trace-caret-blink {
+  0%, 49% {
+    opacity: 1;
+  }
+  50%, 100% {
+    opacity: 0;
+  }
+}
+.trace-caret {
+  animation: trace-caret-blink 1.05s steps(1, end) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal-item {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+    will-change: auto;
+  }
+  .trace-caret {
+    animation: none !important;
+    opacity: 0.75;
+  }
+}

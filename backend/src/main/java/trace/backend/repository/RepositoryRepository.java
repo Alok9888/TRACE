@@ -66,6 +66,7 @@ public interface RepositoryRepository extends JpaRepository<Repository, UUID> {
             )
             FROM Repository r
             WHERE r.userId = :userId AND lower(r.owner) = lower(:owner) AND lower(r.name) = lower(:name)
+            ORDER BY CASE WHEN r.indexingStage = 'creating' THEN 1 ELSE 0 END ASC, r.updatedAt DESC
             """)
     List<IndexStatusResponse> findStatusByUserIdAndOwnerAndName(
             @Param("userId") UUID userId, @Param("owner") String owner, @Param("name") String name);
