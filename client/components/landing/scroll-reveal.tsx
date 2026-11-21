@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import { cn } from "@/lib/utils";
 
 function subscribeReducedMotion(callback: () => void) {
@@ -43,6 +50,86 @@ export function Reveal({
   );
 }
 
+/**
+ * Tactile monochrome card with zero-rerender pointer-tracked specular highlight
+ * and an expanding top hairline beam on hover.
+ */
+export function SpotlightCard({
+  className,
+  children,
+}: {
+  className?: string;
+  children: ReactNode;
+}) {
+  function handlePointerMove(e: ReactPointerEvent<HTMLDivElement>) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    e.currentTarget.style.setProperty("--mx", `${e.clientX - rect.left}px`);
+    e.currentTarget.style.setProperty("--my", `${e.clientY - rect.top}px`);
+  }
+
+  return (
+    <div
+      onPointerMove={handlePointerMove}
+      className={cn("spotlight-card", className)}
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Smooth cubic-out numeric telemetry counter triggered on section entry.
+ */
+export function AnimatedNumber({
+  from = 0,
+  to,
+  active,
+  reducedMotion,
+  durationMs = 760,
+  prefix = "",
+  suffix = "",
+}: {
+  from?: number;
+  to: number;
+  active: boolean;
+  reducedMotion: boolean;
+  durationMs?: number;
+  prefix?: string;
+  suffix?: string;
+}) {
+  const [value, setValue] = useState(from);
+  const startedRef = useRef(false);
+
+  useEffect(() => {
+    if (!active || reducedMotion || startedRef.current) return;
+    startedRef.current = true;
+
+    let rafId = 0;
+    const start = performance.now();
+
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / durationMs);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setValue(Math.round(from + (to - from) * eased));
+      if (t < 1) {
+        rafId = requestAnimationFrame(tick);
+      }
+    };
+
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [active, reducedMotion, from, to, durationMs]);
+
+  const shown = reducedMotion ? to : active ? value : from;
+  return (
+    <span className="tabular-telemetry">
+      {prefix}
+      {shown}
+      {suffix}
+    </span>
+  );
+}
+
 export function SignatureTypewriter({
   text,
   active,
@@ -60,7 +147,7 @@ export function SignatureTypewriter({
     if (!active || reducedMotion) return;
     if (typedCount >= text.length) return;
 
-    const delayMs = typedCount === 0 ? 260 : 42;
+    const delayMs = typedCount === 0 ? 240 : 40;
     const timer = window.setTimeout(() => {
       setTypedCount((prev) => Math.min(text.length, prev + 1));
     }, delayMs);

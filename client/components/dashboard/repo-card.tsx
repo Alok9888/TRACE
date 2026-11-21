@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, type PointerEvent as ReactPointerEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -61,14 +61,21 @@ export function RepoCard({ repo }: { repo: Repository }) {
     });
   }
 
+  function handlePointerMove(e: ReactPointerEvent<HTMLElement>) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    e.currentTarget.style.setProperty("--mx", `${e.clientX - rect.left}px`);
+    e.currentTarget.style.setProperty("--my", `${e.clientY - rect.top}px`);
+  }
+
   return (
     <article
       onMouseEnter={prefetchChat}
+      onPointerMove={handlePointerMove}
       className={cn(
-        "group flex flex-col overflow-hidden rounded-[2px] border bg-card/90 transition-colors duration-150",
+        "spotlight-card group flex flex-col overflow-hidden rounded-[2px] border bg-card/90",
         isFailed
           ? "border-destructive/40 hover:border-destructive/70"
-          : "border-border hover:border-foreground/40"
+          : "border-border hover:border-foreground/45"
       )}
     >
       <div className="border-b border-border/80 px-4 py-3.5">
@@ -190,7 +197,7 @@ export function RepoCard({ repo }: { repo: Repository }) {
             variant={isFailed ? "outline" : "default"}
             className={cn(
               isFailed &&
-                "border-destructive/40 text-destructive hover:border-destructive hover:bg-destructive hover:text-white"
+              "border-destructive/40 text-destructive hover:border-destructive hover:bg-destructive hover:text-white"
             )}
             disabled={isIndexing}
             onClick={handlePrimary}

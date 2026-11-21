@@ -1,21 +1,33 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { useRouter } from "next/navigation";
 import { ArrowDown, ArrowRight, ArrowUp, ArrowUpRight, Mail } from "lucide-react";
 
 import { BrandMark } from "@/components/layout/app-shell";
 import {
+  AnimatedNumber,
   Reveal,
   SignatureTypewriter,
+  SpotlightCard,
   usePrefersReducedMotion,
 } from "@/components/landing/scroll-reveal";
+import {
+  PIPELINE_BEATS,
+  PipelineScrollytelling,
+} from "@/components/landing/pipeline-scrollytelling";
 import { ModeToggle } from "@/components/ui/mode-toggle";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 
-const SECTIONS = [
+const CHAPTERS = [
   { id: "hero", num: "01", label: "Launch" },
   { id: "architecture", num: "02", label: "Pipeline" },
   { id: "latency", num: "03", label: "Runtime" },
@@ -44,54 +56,30 @@ const HERO_SPECS = [
   },
 ] as const;
 
-const PIPELINE_STAGES = [
-  {
-    step: "01",
-    title: "SHA-Diff Zipball Stream",
-    metric: "1 HTTP/2 CALL",
-    body: "Streams repository archives in one pass, strips binaries and lockfiles, and hashes blobs so unchanged files never re-embed.",
-  },
-  {
-    step: "02",
-    title: "Line-Boundary Chunker",
-    metric: "1,600 CHARS",
-    body: "Replaced BPE tokenization with a single-pass line scanner—cutting vector count ~50% while tracking exact start and end lines.",
-  },
-  {
-    step: "03",
-    title: "Cross-File 64× Batcher",
-    metric: "108 → 31 CALLS",
-    body: "Custom fixed-size BatchingStrategy accumulates chunks across small files before calling Cloudflare bge-small-en-v1.5.",
-  },
-  {
-    step: "04",
-    title: "Indexed Direct SQL",
-    metric: "HNSW + B-TREE",
-    body: "Bypasses ORM metadata casts and ANTLR filter parsing with parameterized cosine search on a composite repo/user expression index.",
-  },
-] as const;
-
 const LATENCY_PILLARS = [
   {
+    code: "RT-01",
     label: "4-TIER QUERY ROUTING",
     body: "Trivial turns skip RAG (0 ms). Direct lookups hit llama-3.1-8b-instant in 1–3 sentences; architectural traces scale context to llama-3.3-70b-versatile.",
   },
   {
+    code: "RT-02",
     label: "ZERO-BLOCKING SSE PATH",
     body: "Streams open immediately with 4 s heartbeats. ChatContextCache validates sessions in 0 ms while messages persist off-path via batched JDBC.",
   },
   {
+    code: "RT-03",
     label: "5-MODEL CIRCUIT BREAKER",
     body: "Per-model cooldowns (429 → 5 m, 503 → 60 s) step across four Groq models down to Gemini 2.5 Flash without retrying degraded endpoints.",
   },
 ] as const;
 
 const BENCHMARKS = [
-  { label: "Embedding Calls (1,934 chunks)", before: "108", after: "31 (3.5×)" },
-  { label: "Unchanged File Re-Embeds", before: "100%", after: "0%" },
-  { label: "Pre-RAG Session Lookup", before: "Sync DB", after: "0 ms cache" },
-  { label: "Client Stream Commits", before: "Per token", after: "60 fps rAF" },
-  { label: "Container Memory Envelope", before: "Unbounded", after: "160 MB heap" },
+  { label: "Embedding Calls (1,934 chunks)", before: "108", from: 108, to: 31, suffix: " (3.5×)", barPct: "29%" },
+  { label: "Unchanged File Re-Embeds", before: "100%", from: 100, to: 0, suffix: "%", barPct: "4%" },
+  { label: "Pre-RAG Session Lookup", before: "Sync DB", from: 85, to: 0, suffix: " ms", barPct: "4%" },
+  { label: "Client Stream Frame Cap", before: "Per token", from: 0, to: 60, suffix: " fps rAF", barPct: "100%" },
+  { label: "JVM Heap Envelope", before: "Unbounded", from: 512, to: 160, suffix: " MB", barPct: "32%" },
 ] as const;
 
 const EDGE_POINTS = [
@@ -106,6 +94,7 @@ const EDGE_POINTS = [
     title: "Exposed RAG & LLM Controls",
     tag: "5 LIVE KNOBS",
     body: "Temperature, Max Tokens (256–4096), Top-K (1–10), Similarity Threshold (0–1), and System Prompt sit beside chat and execute directly in SQL and provider calls.",
+    showKnobPreview: true,
   },
   {
     num: "03",
@@ -125,13 +114,25 @@ export default function HomePage() {
   const [repoUrl, setRepoUrl] = useState("");
   const [error, setError] = useState("");
   const [isClicked, setIsClicked] = useState(false);
-  const [activeSection, setActiveSection] = useState(0);
-  const [revealed, setRevealed] = useState<boolean[]>([true, false, false, false, false]);
+
+  // Active chapter (0..4) + active pipeline scrollytelling beat (0..3)
+  const [activeChapter, setActiveChapter] = useState(0);
+  const [activeBeat, setActiveBeat] = useState(0);
+  const [revealed, setRevealed] = useState<boolean[]>([true, true, false, false, false]);
 
   const hasClickedRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRootRef = useRef<HTMLDivElement>(null);
-  const sectionRefs = useRef<(HTMLElement | null)[]>([]);
+  const heroStageRef = useRef<HTMLElement>(null);
+  const progressBarRef = useRef<HTMLDivElement>(null);
+  const spineProgressRef = useRef<HTMLDivElement>(null);
+  const heroBgRef = useRef<HTMLImageElement>(null);
+  const orbitalBgRef = useRef<HTMLImageElement>(null);
+  const earthBgRef = useRef<HTMLImageElement>(null);
+
+  const chapterStopsRef = useRef<(HTMLElement | null)[]>([null, null, null, null, null]);
+  const beatStopsRef = useRef<(HTMLDivElement | null)[]>([null, null, null, null]);
+
   const reducedMotion = usePrefersReducedMotion();
   const router = useRouter();
 
@@ -140,42 +141,99 @@ export default function HomePage() {
     void fetch("/backend/api/health", { cache: "no-store" }).catch(() => {});
   }, []);
 
-  // Observe section visibility inside the dedicated 100dvh snap container
+  // Continuous 60fps scroll-driven telemetry: progress rail, parallax depth, and scrollytelling beats
   useEffect(() => {
     const root = scrollRootRef.current;
     if (!root) return;
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (!entry.isIntersecting) continue;
-          const idx = Number((entry.target as HTMLElement).dataset.sectionIndex);
-          if (Number.isNaN(idx)) continue;
-          setActiveSection(idx);
-          setRevealed((prev) => {
-            if (prev[idx]) return prev;
-            const next = [...prev];
-            next[idx] = true;
-            return next;
-          });
-        }
-      },
-      {
-        root,
-        threshold: 0.45,
+    let rafId = 0;
+
+    const syncScroll = () => {
+      rafId = 0;
+      const vh = root.clientHeight || window.innerHeight || 1;
+      const scrollTop = root.scrollTop;
+      const maxScroll = Math.max(1, root.scrollHeight - vh);
+      const globalProgress = Math.min(1, Math.max(0, scrollTop / maxScroll));
+
+      // 1px top telemetry progress bar (0 React re-renders)
+      if (progressBarRef.current) {
+        progressBarRef.current.style.transform = `scaleX(${globalProgress})`;
       }
-    );
 
-    for (const el of sectionRefs.current) {
-      if (el) observer.observe(el);
-    }
+      // Continuous scrollytelling spine progress across the 400dvh track (scrollTop 1vh..4vh)
+      const beatFloat = (scrollTop - vh) / vh;
+      const clampedBeatProgress = Math.min(1, Math.max(0, beatFloat / (PIPELINE_BEATS.length - 1)));
+      if (spineProgressRef.current) {
+        spineProgressRef.current.style.transform = `scaleY(${0.15 + clampedBeatProgress * 0.85})`;
+      }
 
-    return () => observer.disconnect();
-  }, []);
+      // Determine active beat (0..3) and active chapter (0..4)
+      const nextBeat = Math.min(
+        PIPELINE_BEATS.length - 1,
+        Math.max(0, Math.round(beatFloat))
+      );
+      setActiveBeat((prev) => (prev === nextBeat ? prev : nextBeat));
 
-  const scrollToSection = useCallback(
-    (index: number, focusInput = false) => {
-      const target = sectionRefs.current[index];
+      let nextChapter = 0;
+      if (scrollTop < vh * 0.55) {
+        nextChapter = 0;
+      } else if (scrollTop < vh * 4.55) {
+        nextChapter = 1;
+      } else if (scrollTop < vh * 5.55) {
+        nextChapter = 2;
+      } else if (scrollTop < vh * 6.55) {
+        nextChapter = 3;
+      } else {
+        nextChapter = 4;
+      }
+
+      setActiveChapter((prev) => (prev === nextChapter ? prev : nextChapter));
+      setRevealed((prev) => {
+        if (prev[nextChapter]) return prev;
+        const copy = [...prev];
+        copy[nextChapter] = true;
+        return copy;
+      });
+
+      // Subtle GPU-composited parallax on real monochrome photography
+      if (!reducedMotion) {
+        if (heroBgRef.current) {
+          const heroDelta = Math.min(1.2, Math.max(-0.5, scrollTop / vh));
+          heroBgRef.current.style.transform = `translate3d(0, ${heroDelta * -46}px, 0) scale(${1.03 + heroDelta * 0.05})`;
+        }
+        if (orbitalBgRef.current) {
+          const orbDelta = Math.min(1, Math.max(0, clampedBeatProgress));
+          orbitalBgRef.current.style.transform = `translate3d(0, ${(orbDelta - 0.5) * -36}px, 0) scale(${1.05 + orbDelta * 0.06})`;
+        }
+        if (earthBgRef.current) {
+          const sigDelta = (scrollTop - vh * 7) / vh;
+          earthBgRef.current.style.transform = `translate3d(0, ${sigDelta * -32}px, 0) scale(${1.04 + Math.abs(sigDelta) * 0.04})`;
+        }
+      }
+    };
+
+    const onScroll = () => {
+      if (rafId === 0) {
+        rafId = requestAnimationFrame(syncScroll);
+      }
+    };
+
+    syncScroll();
+    root.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll, { passive: true });
+    return () => {
+      root.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [reducedMotion]);
+
+  const scrollToChapter = useCallback(
+    (chapterIndex: number, focusInput = false) => {
+      const target =
+        chapterIndex === 1
+          ? beatStopsRef.current[0]
+          : chapterStopsRef.current[chapterIndex];
       if (!target) return;
       target.scrollIntoView({
         behavior: reducedMotion ? "auto" : "smooth",
@@ -187,6 +245,29 @@ export default function HomePage() {
     },
     [reducedMotion]
   );
+
+  const scrollToBeat = useCallback(
+    (beatIndex: number) => {
+      const target = beatStopsRef.current[beatIndex];
+      if (!target) return;
+      target.scrollIntoView({
+        behavior: reducedMotion ? "auto" : "smooth",
+        block: "start",
+      });
+    },
+    [reducedMotion]
+  );
+
+  const registerBeatStop = useCallback((beatIndex: number, el: HTMLDivElement | null) => {
+    beatStopsRef.current[beatIndex] = el;
+  }, []);
+
+  function handleHeroPointerMove(e: ReactPointerEvent<HTMLElement>) {
+    if (reducedMotion || !heroStageRef.current) return;
+    const rect = heroStageRef.current.getBoundingClientRect();
+    heroStageRef.current.style.setProperty("--hero-mx", `${e.clientX - rect.left}px`);
+    heroStageRef.current.style.setProperty("--hero-my", `${e.clientY - rect.top}px`);
+  }
 
   function analyze() {
     if (hasClickedRef.current) return;
@@ -220,66 +301,78 @@ export default function HomePage() {
 
   return (
     <div className="relative h-[100dvh] w-full overflow-hidden bg-background text-foreground">
-      {/* Fixed top mission bar */}
+      {/* Fixed top mission bar + razor-thin live scroll progress beam */}
       <header className="fixed inset-x-0 top-0 z-40 h-14 border-b border-border/80 bg-background/75 backdrop-blur-md">
         <div className="mx-auto flex h-full w-full max-w-6xl items-center justify-between px-4 sm:px-6">
           <button
             type="button"
-            onClick={() => scrollToSection(0)}
+            onClick={() => scrollToChapter(0)}
             aria-label="Scroll to top"
-            className="text-left focus-visible:outline-none"
+            className="text-left transition-opacity hover:opacity-80 focus-visible:outline-none"
           >
             <BrandMark />
           </button>
 
           <div className="flex items-center gap-4 sm:gap-5">
             <span className="tabular-telemetry hidden font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase md:inline">
-              {SECTIONS[activeSection]?.num} / 0{SECTIONS.length} · {SECTIONS[activeSection]?.label}
+              {CHAPTERS[activeChapter]?.num} / 0{CHAPTERS.length} ·{" "}
+              {activeChapter === 1
+                ? `PIPELINE ${PIPELINE_BEATS[activeBeat]?.step}/04`
+                : CHAPTERS[activeChapter]?.label}
             </span>
             <span className="hidden items-center gap-2 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase sm:inline-flex">
-              <span className="size-1.5 rounded-full bg-foreground/80" />
+              <span className="size-1.5 animate-pulse rounded-full bg-foreground/85" />
               SYS // NOMINAL
             </span>
             <Link
               href="/dashboard"
-              className="font-heading text-xs font-semibold tracking-[0.16em] text-muted-foreground uppercase transition-colors hover:text-foreground"
+              className="group relative font-heading text-xs font-semibold tracking-[0.16em] text-muted-foreground uppercase transition-colors hover:text-foreground"
             >
-              Console
+              <span>Console</span>
+              <span className="absolute -bottom-1 left-0 h-px w-full origin-left scale-x-0 bg-foreground transition-transform duration-300 group-hover:scale-x-100" />
             </Link>
             <ModeToggle />
           </div>
         </div>
+        {/* Continuous 1px scroll telemetry beam */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-transparent">
+          <div
+            ref={progressBarRef}
+            className="h-full w-full origin-left bg-foreground/75 will-change-transform"
+            style={{ transform: "scaleX(0)" }}
+          />
+        </div>
       </header>
 
-      {/* Whisper-quiet right-edge section rail (desktop) */}
+      {/* Whisper-quiet right-edge navigation rail (desktop) */}
       <nav
         aria-label="Page sections"
         className="fixed top-1/2 right-5 z-30 hidden -translate-y-1/2 flex-col items-end gap-3 lg:flex"
       >
-        {SECTIONS.map((sec, idx) => {
-          const isActive = activeSection === idx;
+        {CHAPTERS.map((ch, idx) => {
+          const isActive = activeChapter === idx;
           return (
             <button
-              key={sec.id}
+              key={ch.id}
               type="button"
-              onClick={() => scrollToSection(idx)}
-              aria-label={`Jump to ${sec.label}`}
+              onClick={() => scrollToChapter(idx)}
+              aria-label={`Jump to ${ch.label}`}
               aria-current={isActive ? "true" : undefined}
               className="group flex items-center gap-2 py-1"
             >
               <span
-                className={`font-mono text-[9px] tracking-[0.18em] uppercase transition-opacity duration-200 ${
+                className={`font-mono text-[9px] tracking-[0.18em] uppercase transition-all duration-200 ${
                   isActive
-                    ? "text-foreground opacity-100"
-                    : "text-muted-foreground opacity-0 group-hover:opacity-80"
+                    ? "translate-x-0 text-foreground opacity-100"
+                    : "translate-x-1 text-muted-foreground opacity-0 group-hover:translate-x-0 group-hover:opacity-80"
                 }`}
               >
-                {sec.num}
+                {ch.num}
               </span>
               <span
                 className={`block h-px transition-all duration-300 ${
                   isActive
-                    ? "w-6 bg-foreground"
+                    ? "w-7 bg-foreground"
                     : "w-3 bg-border group-hover:w-5 group-hover:bg-foreground/60"
                 }`}
               />
@@ -294,47 +387,62 @@ export default function HomePage() {
         className="h-[100dvh] w-full snap-y snap-mandatory overflow-x-hidden overflow-y-auto scroll-smooth"
       >
         {/* =====================================================================
-            SECTION 01 — HERO
+            SECTION 01 — HERO (100dvh)
            ===================================================================== */}
         <section
           id="hero"
-          data-section-index={0}
           ref={(el) => {
-            sectionRefs.current[0] = el;
+            heroStageRef.current = el;
+            chapterStopsRef.current[0] = el;
           }}
+          onPointerMove={handleHeroPointerMove}
           className="relative flex h-[100dvh] w-full snap-start snap-always flex-col overflow-hidden pt-14"
         >
-          {/* Real monochrome SpaceX night-launch photography */}
+          {/* Monochrome SpaceX launch backdrop with smooth scroll parallax + cursor light */}
           <div className="pointer-events-none absolute inset-0 overflow-hidden select-none">
             <img
+              ref={heroBgRef}
               src="/images/spacex-launch-arc.jpg"
               alt=""
               aria-hidden="true"
-              className="h-full w-full object-cover object-[72%_35%] opacity-[0.22] contrast-125 sm:object-right-bottom dark:opacity-[0.30] [mask-image:radial-gradient(ellipse_80%_75%_at_75%_55%,black_25%,transparent_100%)]"
+              className="h-full w-full scale-[1.03] object-cover object-[72%_35%] opacity-[0.22] contrast-125 will-change-transform sm:object-right-bottom dark:opacity-[0.32] [mask-image:radial-gradient(ellipse_80%_75%_at_75%_55%,black_25%,transparent_100%)]"
             />
             <div className="mission-grid absolute inset-0 opacity-60" />
+            <div className="hero-spotlight absolute inset-0 transition-opacity duration-500" />
           </div>
 
           <main className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col justify-between px-4 py-6 sm:px-6 sm:py-10 md:py-12">
             <div className="max-w-2xl space-y-4 pt-2 sm:space-y-6 sm:pt-4 md:pt-8">
               <div className="space-y-2.5 sm:space-y-4">
-                <p className="font-mono text-[10px] tracking-[0.22em] text-muted-foreground uppercase sm:text-[11px]">
+                <p
+                  className="hero-mask-reveal font-mono text-[10px] tracking-[0.22em] text-muted-foreground uppercase sm:text-[11px]"
+                  style={{ animationDelay: "40ms" }}
+                >
                   00 // CODEBASE TELEMETRY ENGINE
                 </p>
-                <h1 className="font-heading text-[2rem] leading-[1.02] font-semibold tracking-[0.04em] uppercase sm:text-5xl lg:text-6xl">
+                <h1
+                  className="hero-mask-reveal font-heading text-[2rem] leading-[1.02] font-semibold tracking-[0.04em] uppercase sm:text-5xl lg:text-6xl"
+                  style={{ animationDelay: "120ms" }}
+                >
                   Interrogate Any Repository.
                 </h1>
-                <p className="max-w-lg text-xs leading-relaxed text-muted-foreground sm:text-base">
+                <p
+                  className="hero-mask-reveal max-w-lg text-xs leading-relaxed text-muted-foreground sm:text-base"
+                  style={{ animationDelay: "210ms" }}
+                >
                   Stream public GitHub source trees into vector space and query architecture,
                   execution paths, and symbols with line-level citations.
                 </p>
               </div>
 
               {/* Launch command input bar */}
-              <div className="space-y-2.5 pt-1 sm:space-y-3 sm:pt-2">
-                <div className="flex flex-col border border-input bg-background/85 backdrop-blur-sm transition-colors focus-within:border-foreground sm:flex-row">
+              <div
+                className="hero-mask-reveal space-y-2.5 pt-1 sm:space-y-3 sm:pt-2"
+                style={{ animationDelay: "300ms" }}
+              >
+                <div className="group/bar flex flex-col border border-input bg-background/85 backdrop-blur-sm transition-all duration-200 hover:border-foreground/50 focus-within:border-foreground sm:flex-row">
                   <div className="flex min-w-0 flex-1 items-center">
-                    <div className="flex shrink-0 items-center border-r border-border/70 px-3 py-2 font-mono text-[11px] tracking-[0.12em] text-muted-foreground uppercase sm:px-3.5">
+                    <div className="flex shrink-0 items-center border-r border-border/70 px-3 py-2 font-mono text-[11px] tracking-[0.12em] text-muted-foreground uppercase transition-colors group-focus-within/bar:text-foreground sm:px-3.5">
                       GIT
                     </div>
                     <input
@@ -357,14 +465,14 @@ export default function HomePage() {
                     size="lg"
                     onClick={analyze}
                     disabled={isClicked}
-                    className={`h-11 rounded-none border-0 border-t border-input bg-transparent px-7 text-foreground hover:bg-foreground hover:text-background sm:h-12 sm:border-t-0 sm:border-l ${
+                    className={`h-11 rounded-none border-0 border-t border-input bg-transparent px-7 text-foreground transition-all duration-200 hover:bg-foreground hover:text-background sm:h-12 sm:border-t-0 sm:border-l ${
                       isClicked ? "pointer-events-none opacity-60" : ""
                     }`}
                   >
                     Analyze
                     <ArrowRight
                       className={`size-3.5 transition-transform duration-200 ${
-                        isClicked ? "translate-x-1" : "group-hover/button:translate-x-0.5"
+                        isClicked ? "translate-x-1" : "group-hover/button:translate-x-1"
                       }`}
                     />
                   </Button>
@@ -381,41 +489,46 @@ export default function HomePage() {
               </div>
             </div>
 
-            {/* Bottom telemetry strip + understated scroll indicator */}
+            {/* Bottom tactile spec strip + kinetic scroll cue */}
             <div className="space-y-4 sm:space-y-6">
-              <div className="grid gap-3 border-t border-border/80 pt-4 sm:gap-6 sm:pt-6 md:grid-cols-3">
+              <div className="grid gap-2.5 border-t border-border/80 pt-4 sm:gap-5 sm:pt-5 md:grid-cols-3">
                 {HERO_SPECS.map((item) => (
-                  <div key={item.index} className="space-y-1 sm:space-y-2">
+                  <SpotlightCard
+                    key={item.index}
+                    className="group space-y-1 border border-transparent px-2.5 py-2 sm:space-y-2 sm:px-3 sm:py-2.5"
+                  >
                     <div className="flex items-center justify-between gap-2 font-mono text-[10px] tracking-[0.2em] text-muted-foreground sm:text-[11px]">
                       <div className="flex items-center gap-2.5">
-                        <span>{item.index}</span>
-                        <span className="h-px w-5 bg-border" />
+                        <span className="transition-colors group-hover:text-foreground">
+                          {item.index}
+                        </span>
+                        <span className="h-px w-5 bg-border transition-all duration-300 group-hover:w-7 group-hover:bg-foreground/70" />
                         <span className="font-heading text-xs font-semibold tracking-[0.18em] text-foreground">
                           {item.title}
                         </span>
                       </div>
-                      <span className="tabular-telemetry text-[9px] tracking-[0.12em] text-muted-foreground/75 uppercase sm:text-[10px]">
+                      <span className="tabular-telemetry text-[9px] tracking-[0.12em] text-muted-foreground/75 uppercase transition-colors group-hover:text-foreground/90 sm:text-[10px]">
                         {item.metric}
                       </span>
                     </div>
                     <p className="text-[11px] leading-relaxed text-muted-foreground sm:text-xs">
                       {item.body}
                     </p>
-                  </div>
+                  </SpotlightCard>
                 ))}
               </div>
 
               <div className="flex items-center justify-between">
                 <button
                   type="button"
-                  onClick={() => scrollToSection(1)}
+                  onClick={() => scrollToChapter(1)}
                   className="group inline-flex items-center gap-2 font-mono text-[10px] tracking-[0.2em] text-muted-foreground uppercase transition-colors hover:text-foreground"
                 >
-                  <span>Architecture</span>
-                  <ArrowDown className="size-3 transition-transform duration-300 group-hover:translate-y-0.5" />
+                  <span>Unfold Pipeline</span>
+                  <ArrowDown className="scroll-cue-pulse size-3" />
                 </button>
                 <span className="hidden font-mono text-[10px] tracking-[0.16em] text-muted-foreground/60 uppercase sm:inline">
-                  SCROLL TO INSPECT
+                  SCROLL TO EXPLORE
                 </span>
               </div>
             </div>
@@ -423,97 +536,24 @@ export default function HomePage() {
         </section>
 
         {/* =====================================================================
-            SECTION 02 — UNDER THE HOOD I (INGESTION & VECTOR ARCHITECTURE)
+            SECTION 02 — SCROLLYTELLING CHAPTER: THE PIPELINE (4 pinned 100dvh beats)
            ===================================================================== */}
-        <section
-          id="architecture"
-          data-section-index={1}
-          ref={(el) => {
-            sectionRefs.current[1] = el;
-          }}
-          className="relative flex h-[100dvh] w-full snap-start snap-always flex-col overflow-hidden border-t border-border/60 pt-14"
-        >
-          <div className="pointer-events-none absolute inset-0 overflow-hidden select-none">
-            <img
-              src="/images/orbital-horizon.jpg"
-              alt=""
-              aria-hidden="true"
-              className="h-full w-full object-cover object-center opacity-[0.07] contrast-125 dark:opacity-[0.11] [mask-image:radial-gradient(ellipse_75%_65%_at_50%_55%,black_15%,transparent_100%)]"
-            />
-            <div className="mission-grid absolute inset-0 opacity-45" />
-          </div>
-
-          <div className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col justify-between px-4 py-6 sm:px-6 sm:py-10 md:py-12">
-            <Reveal visible={revealed[1]} className="max-w-2xl space-y-2.5 sm:space-y-3.5">
-              <p className="font-mono text-[10px] tracking-[0.22em] text-muted-foreground uppercase sm:text-[11px]">
-                01 // UNDER THE HOOD — PIPELINE
-              </p>
-              <h2 className="font-heading text-2xl leading-[1.06] font-semibold tracking-[0.04em] uppercase sm:text-4xl lg:text-5xl">
-                Engineered for a 160 MB heap.
-              </h2>
-              <p className="text-xs leading-relaxed text-muted-foreground sm:text-sm">
-                Running Spring Boot, concurrent GitHub ingestion, and vector search on a
-                constrained container leaves zero margin for naive defaults. Every stage is
-                streaming, diff-aware, and bounded in memory.
-              </p>
-            </Reveal>
-
-            <div className="grid gap-2.5 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
-              {PIPELINE_STAGES.map((stage, i) => (
-                <Reveal
-                  key={stage.step}
-                  visible={revealed[1]}
-                  delay={90 + i * 70}
-                  className="flex flex-col justify-between border border-border/80 bg-card/70 p-3.5 backdrop-blur-sm sm:p-5"
-                >
-                  <div className="space-y-2 sm:space-y-3">
-                    <div className="flex items-center justify-between gap-2 font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase">
-                      <span>{stage.step}</span>
-                      <span className="tabular-telemetry text-foreground/80">
-                        {stage.metric}
-                      </span>
-                    </div>
-                    <h3 className="font-heading text-xs font-semibold tracking-[0.1em] text-foreground uppercase sm:text-sm">
-                      {stage.title}
-                    </h3>
-                    <p className="text-[11px] leading-relaxed text-muted-foreground sm:text-xs">
-                      {stage.body}
-                    </p>
-                  </div>
-                </Reveal>
-              ))}
-            </div>
-
-            <Reveal
-              visible={revealed[1]}
-              delay={380}
-              className="flex flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-3 font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase sm:pt-4"
-            >
-              <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
-                <span>JAVA 21 VIRTUAL THREADS</span>
-                <span>CLOUDFLARE BGE-SMALL-EN-V1.5</span>
-                <span>NEON POSTGRES + PGVECTOR</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => scrollToSection(2)}
-                className="inline-flex items-center gap-1.5 text-foreground/80 transition-colors hover:text-foreground"
-              >
-                <span>Runtime</span>
-                <ArrowDown className="size-3" />
-              </button>
-            </Reveal>
-          </div>
-        </section>
+        <PipelineScrollytelling
+          activeBeat={activeBeat}
+          spineProgressRef={spineProgressRef}
+          orbitalBgRef={orbitalBgRef}
+          registerBeatStop={registerBeatStop}
+          onSelectBeat={scrollToBeat}
+          onNextSection={() => scrollToChapter(2)}
+        />
 
         {/* =====================================================================
-            SECTION 03 — UNDER THE HOOD II (LATENCY & RUNTIME BENCHMARKS)
+            SECTION 03 — UNDER THE HOOD II: RUNTIME & BENCHMARKS (100dvh)
            ===================================================================== */}
         <section
           id="latency"
-          data-section-index={2}
           ref={(el) => {
-            sectionRefs.current[2] = el;
+            chapterStopsRef.current[2] = el;
           }}
           className="relative flex h-[100dvh] w-full snap-start snap-always flex-col overflow-hidden border-t border-border/60 pt-14"
         >
@@ -529,53 +569,71 @@ export default function HomePage() {
               </h2>
             </Reveal>
 
-            <div className="grid items-start gap-5 lg:grid-cols-12 lg:gap-8">
-              {/* Left: Runtime architecture pillars */}
-              <div className="space-y-3 sm:space-y-4 lg:col-span-6">
+            <div className="grid items-start gap-4 lg:grid-cols-12 lg:gap-8">
+              {/* Left: Interactive hover runtime pillars */}
+              <div className="space-y-2.5 sm:space-y-3.5 lg:col-span-6">
                 {LATENCY_PILLARS.map((item, i) => (
-                  <Reveal
-                    key={item.label}
-                    visible={revealed[2]}
-                    delay={80 + i * 75}
-                    className="border-l border-border pl-3.5 sm:pl-4"
-                  >
-                    <p className="font-mono text-[10px] font-medium tracking-[0.16em] text-foreground uppercase sm:text-[11px]">
-                      {item.label}
-                    </p>
-                    <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground sm:text-xs">
-                      {item.body}
-                    </p>
+                  <Reveal key={item.label} visible={revealed[2]} delay={80 + i * 75}>
+                    <SpotlightCard className="group border border-border/75 bg-card/55 px-3.5 py-3 sm:px-4 sm:py-3.5">
+                      <div className="flex items-center justify-between gap-2 font-mono text-[10px] tracking-[0.16em] uppercase sm:text-[11px]">
+                        <span className="font-medium text-foreground">{item.label}</span>
+                        <span className="text-[9px] text-muted-foreground/70 transition-colors group-hover:text-foreground">
+                          {item.code}
+                        </span>
+                      </div>
+                      <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground sm:text-xs">
+                        {item.body}
+                      </p>
+                    </SpotlightCard>
                   </Reveal>
                 ))}
               </div>
 
-              {/* Right: Concrete Before -> After ledger */}
-              <Reveal
-                visible={revealed[2]}
-                delay={220}
-                className="border border-border/80 bg-card/70 lg:col-span-6"
-              >
-                <div className="grid grid-cols-[1.4fr_0.75fr_0.85fr] border-b border-border/80 px-3.5 py-2 font-mono text-[9px] tracking-[0.18em] text-muted-foreground uppercase sm:px-4 sm:py-2.5 sm:text-[10px]">
-                  <span>Metric</span>
-                  <span>Before</span>
-                  <span className="text-right text-foreground">After</span>
-                </div>
-                <div className="divide-y divide-border/60">
-                  {BENCHMARKS.map((row) => (
-                    <div
-                      key={row.label}
-                      className="grid grid-cols-[1.4fr_0.75fr_0.85fr] items-center gap-2 px-3.5 py-2 font-mono text-[10px] sm:px-4 sm:py-3 sm:text-xs"
-                    >
-                      <span className="truncate text-muted-foreground">{row.label}</span>
-                      <span className="tabular-telemetry text-muted-foreground/65 line-through decoration-border">
-                        {row.before}
-                      </span>
-                      <span className="tabular-telemetry text-right font-medium text-foreground">
-                        {row.after}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+              {/* Right: Animated Count-Up & Metric Bars Ledger */}
+              <Reveal visible={revealed[2]} delay={200} className="lg:col-span-6">
+                <SpotlightCard className="border border-border/80 bg-card/70">
+                  <div className="grid grid-cols-[1.4fr_0.65fr_0.95fr] border-b border-border/80 px-3.5 py-2 font-mono text-[9px] tracking-[0.18em] text-muted-foreground uppercase sm:px-4 sm:py-2.5 sm:text-[10px]">
+                    <span>Metric</span>
+                    <span>Before</span>
+                    <span className="text-right text-foreground">After</span>
+                  </div>
+                  <div className="divide-y divide-border/60">
+                    {BENCHMARKS.map((row, idx) => (
+                      <div
+                        key={row.label}
+                        className="group space-y-1.5 px-3.5 py-2 transition-colors hover:bg-foreground/[0.03] sm:px-4 sm:py-2.5"
+                      >
+                        <div className="grid grid-cols-[1.4fr_0.65fr_0.95fr] items-center gap-2 font-mono text-[10px] sm:text-xs">
+                          <span className="truncate text-muted-foreground transition-colors group-hover:text-foreground">
+                            {row.label}
+                          </span>
+                          <span className="tabular-telemetry text-muted-foreground/60 line-through decoration-border">
+                            {row.before}
+                          </span>
+                          <span className="text-right font-medium text-foreground transition-transform duration-200 group-hover:-translate-x-0.5">
+                            <AnimatedNumber
+                              from={row.from}
+                              to={row.to}
+                              suffix={row.suffix}
+                              active={revealed[2]}
+                              reducedMotion={reducedMotion}
+                            />
+                          </span>
+                        </div>
+                        <div className="h-[2px] w-full bg-border/50">
+                          <div
+                            data-visible={revealed[2] ? "true" : "false"}
+                            style={{
+                              width: row.barPct,
+                              transitionDelay: `${260 + idx * 80}ms`,
+                            }}
+                            className="metric-bar-fill h-full bg-foreground/75"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </SpotlightCard>
               </Reveal>
             </div>
 
@@ -587,24 +645,23 @@ export default function HomePage() {
               <span>MEASURED ON PRODUCTION INDEXING &amp; SSE TRACES</span>
               <button
                 type="button"
-                onClick={() => scrollToSection(3)}
-                className="inline-flex items-center gap-1.5 text-foreground/80 transition-colors hover:text-foreground"
+                onClick={() => scrollToChapter(3)}
+                className="group inline-flex items-center gap-1.5 text-foreground/80 transition-colors hover:text-foreground"
               >
                 <span>The Edge</span>
-                <ArrowDown className="size-3" />
+                <ArrowDown className="size-3 transition-transform duration-200 group-hover:translate-y-0.5" />
               </button>
             </Reveal>
           </div>
         </section>
 
         {/* =====================================================================
-            SECTION 04 — THE EDGE (DIFFERENTIATION)
+            SECTION 04 — THE EDGE (100dvh)
            ===================================================================== */}
         <section
           id="edge"
-          data-section-index={3}
           ref={(el) => {
-            sectionRefs.current[3] = el;
+            chapterStopsRef.current[3] = el;
           }}
           className="relative flex h-[100dvh] w-full snap-start snap-always flex-col overflow-hidden border-t border-border/60 pt-14"
         >
@@ -627,22 +684,38 @@ export default function HomePage() {
 
             <div className="grid gap-2.5 sm:grid-cols-2 sm:gap-4">
               {EDGE_POINTS.map((point, i) => (
-                <Reveal
-                  key={point.num}
-                  visible={revealed[3]}
-                  delay={80 + i * 70}
-                  className="border border-border/80 bg-card/60 p-3.5 sm:p-5"
-                >
-                  <div className="flex items-center justify-between gap-2 font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase">
-                    <span>{point.num}</span>
-                    <span className="text-foreground/75">{point.tag}</span>
-                  </div>
-                  <h3 className="mt-2 font-heading text-xs font-semibold tracking-[0.1em] text-foreground uppercase sm:text-sm">
-                    {point.title}
-                  </h3>
-                  <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground sm:text-xs">
-                    {point.body}
-                  </p>
+                <Reveal key={point.num} visible={revealed[3]} delay={80 + i * 75}>
+                  <SpotlightCard className="group flex h-full flex-col justify-between border border-border/80 bg-card/60 p-3.5 sm:p-5">
+                    <div>
+                      <div className="flex items-center justify-between gap-2 font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase">
+                        <span className="transition-colors group-hover:text-foreground">
+                          {point.num}
+                        </span>
+                        <span className="border border-border/80 px-2 py-0.5 text-[9px] text-foreground/75 transition-colors duration-200 group-hover:border-foreground group-hover:bg-foreground group-hover:text-background">
+                          {point.tag}
+                        </span>
+                      </div>
+                      <h3 className="mt-2 font-heading text-xs font-semibold tracking-[0.1em] text-foreground uppercase sm:text-sm">
+                        {point.title}
+                      </h3>
+                      <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground sm:text-xs">
+                        {point.body}
+                      </p>
+                    </div>
+
+                    {"showKnobPreview" in point && point.showKnobPreview && (
+                      <div className="mt-3 hidden items-center gap-3 border-t border-border/60 pt-2.5 font-mono text-[9px] tracking-[0.12em] text-muted-foreground uppercase sm:flex">
+                        <span>TEMP 0.20</span>
+                        <div className="relative h-px flex-1 bg-border">
+                          <span className="absolute top-1/2 left-[20%] size-2 -translate-y-1/2 bg-foreground transition-all duration-500 ease-out group-hover:left-[68%]" />
+                        </div>
+                        <span>TOP-K 5</span>
+                        <div className="relative h-px flex-1 bg-border">
+                          <span className="absolute top-1/2 left-[50%] size-2 -translate-y-1/2 bg-foreground transition-all duration-500 ease-out group-hover:left-[80%]" />
+                        </div>
+                      </div>
+                    )}
+                  </SpotlightCard>
                 </Reveal>
               ))}
             </div>
@@ -652,60 +725,87 @@ export default function HomePage() {
               delay={360}
               className="flex flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-3 sm:pt-4"
             >
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-5">
                 <button
                   type="button"
-                  onClick={() => scrollToSection(0, true)}
-                  className="inline-flex items-center gap-1.5 font-mono text-[10px] font-medium tracking-[0.16em] text-foreground uppercase transition-opacity hover:opacity-75"
+                  onClick={() => scrollToChapter(0, true)}
+                  className="group relative inline-flex items-center gap-1.5 font-mono text-[10px] font-medium tracking-[0.16em] text-foreground uppercase"
                 >
                   <span>Index a Repository</span>
-                  <ArrowUp className="size-3" />
+                  <ArrowUp className="size-3 transition-transform duration-200 group-hover:-translate-y-0.5" />
+                  <span className="absolute -bottom-1 left-0 h-px w-full origin-left scale-x-0 bg-foreground transition-transform duration-300 group-hover:scale-x-100" />
                 </button>
                 <Link
                   href="/dashboard"
-                  className="inline-flex items-center gap-1 font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase transition-colors hover:text-foreground"
+                  className="group relative inline-flex items-center gap-1 font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase transition-colors hover:text-foreground"
                 >
                   <span>Open Console</span>
-                  <ArrowUpRight className="size-3" />
+                  <ArrowUpRight className="size-3 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+                  <span className="absolute -bottom-1 left-0 h-px w-full origin-left scale-x-0 bg-foreground transition-transform duration-300 group-hover:scale-x-100" />
                 </Link>
               </div>
               <button
                 type="button"
-                onClick={() => scrollToSection(4)}
-                className="inline-flex items-center gap-1.5 font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase transition-colors hover:text-foreground"
+                onClick={() => scrollToChapter(4)}
+                className="group inline-flex items-center gap-1.5 font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase transition-colors hover:text-foreground"
               >
                 <span>Signature</span>
-                <ArrowDown className="size-3" />
+                <ArrowDown className="size-3 transition-transform duration-200 group-hover:translate-y-0.5" />
               </button>
             </Reveal>
           </div>
         </section>
 
         {/* =====================================================================
-            SECTION 05 — CLOSING / SIGNATURE
+            SECTION 05 — CLOSING / SIGNATURE (100dvh)
            ===================================================================== */}
         <section
           id="signature"
-          data-section-index={4}
           ref={(el) => {
-            sectionRefs.current[4] = el;
+            chapterStopsRef.current[4] = el;
           }}
           className="relative flex h-[100dvh] w-full snap-start snap-always flex-col overflow-hidden border-t border-border/60 pt-14"
         >
           <div className="pointer-events-none absolute inset-0 overflow-hidden select-none">
             <img
+              ref={earthBgRef}
               src="/images/earth-dark.jpg"
               alt=""
               aria-hidden="true"
-              className="h-full w-full object-cover object-center opacity-[0.06] contrast-125 dark:opacity-[0.10] [mask-image:radial-gradient(ellipse_60%_60%_at_50%_55%,black_15%,transparent_100%)]"
+              className="h-full w-full scale-105 object-cover object-center opacity-[0.06] contrast-125 will-change-transform dark:opacity-[0.11] [mask-image:radial-gradient(ellipse_60%_60%_at_50%_55%,black_15%,transparent_100%)]"
             />
+            {/* Whisper-quiet slow rotating orbital hairline ring */}
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 600 600"
+              className="orbital-spin absolute top-1/2 left-1/2 size-[440px] -translate-x-1/2 -translate-y-1/2 opacity-[0.14] sm:size-[560px]"
+            >
+              <circle
+                cx="300"
+                cy="300"
+                r="260"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="0.75"
+                strokeDasharray="3 10"
+              />
+              <circle
+                cx="300"
+                cy="300"
+                r="195"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="0.5"
+                strokeOpacity="0.55"
+              />
+            </svg>
           </div>
 
           <div className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col justify-between px-4 py-8 sm:px-6 sm:py-12">
             <div />
 
             <div className="mx-auto flex max-w-xl flex-col items-center space-y-6 text-center">
-              <Reveal visible={revealed[4]} className="space-y-2">
+              <Reveal visible={revealed[4]} className="space-y-2.5">
                 <p className="font-mono text-[10px] tracking-[0.24em] text-muted-foreground uppercase">
                   04 // END OF TELEMETRY
                 </p>
@@ -729,18 +829,20 @@ export default function HomePage() {
                   href="https://github.com/Alok9888"
                   target="_blank"
                   rel="noreferrer"
-                  className="group inline-flex items-center gap-1.5 transition-colors hover:text-foreground"
+                  className="group relative inline-flex items-center gap-1.5 py-0.5 transition-colors hover:text-foreground"
                 >
                   <span>GitHub</span>
                   <ArrowUpRight className="size-3 opacity-60 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:opacity-100" />
+                  <span className="absolute bottom-0 left-0 h-px w-full origin-left scale-x-0 bg-foreground transition-transform duration-300 group-hover:scale-x-100" />
                 </a>
                 <span className="h-3 w-px bg-border" aria-hidden="true" />
                 <a
                   href="mailto:alokshri571@gmail.com"
-                  className="group inline-flex items-center gap-1.5 transition-colors hover:text-foreground"
+                  className="group relative inline-flex items-center gap-1.5 py-0.5 transition-colors hover:text-foreground"
                 >
                   <Mail className="size-3 opacity-60 transition-opacity group-hover:opacity-100" />
                   <span className="normal-case tracking-[0.04em]">alokshri571@gmail.com</span>
+                  <span className="absolute bottom-0 left-0 h-px w-full origin-left scale-x-0 bg-foreground transition-transform duration-300 group-hover:scale-x-100" />
                 </a>
               </Reveal>
             </div>
@@ -749,11 +851,11 @@ export default function HomePage() {
               <span>TRACE // CODEBASE MISSION CONTROL</span>
               <button
                 type="button"
-                onClick={() => scrollToSection(0)}
-                className="inline-flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground"
+                onClick={() => scrollToChapter(0)}
+                className="group inline-flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground"
               >
                 <span>Back to Top</span>
-                <ArrowUp className="size-3" />
+                <ArrowUp className="size-3 transition-transform duration-200 group-hover:-translate-y-0.5" />
               </button>
             </footer>
           </div>
