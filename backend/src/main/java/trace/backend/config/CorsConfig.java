@@ -38,9 +38,10 @@ public class CorsConfig {
         // Use allowedOriginPatterns for wildcard support (Spring Security 6.x)
         config.setAllowedOriginPatterns(patterns);
 
-        // Restrict HTTP methods to GET, POST, OPTIONS
-        config.setAllowedMethods(Arrays.asList("GET", "POST", "OPTIONS"));
+        // Allow standard REST + MCP Streamable HTTP methods (GET, POST, DELETE, OPTIONS)
+        config.setAllowedMethods(Arrays.asList("GET", "POST", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(Arrays.asList("*"));
+        config.setExposedHeaders(Arrays.asList("Mcp-Session-Id"));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
 

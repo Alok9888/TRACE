@@ -14,7 +14,14 @@ import {
 } from "@/components/ui/empty";
 import { Progress } from "@/components/ui/progress";
 import { useStartIndexing } from "@/hooks/use-repos";
-import { isPdfSource, type IndexStatusResponse, type Repository } from "@/lib/api";
+import {
+  effectiveSourceType,
+  getSourceTypeMeta,
+  isUploadedSource,
+  type IndexStatusResponse,
+  type Repository,
+  type SourceType,
+} from "@/lib/api";
 
 const STAGES = [
   { key: "creating", num: "01", label: "INIT" },
@@ -91,6 +98,57 @@ const PDF_SUBTEXTS: Record<string, string[]> = {
   ],
 };
 
+function getSubtextsForType(sourceType: SourceType): Record<string, string[]> {
+  if (sourceType === "GITHUB_REPO") return REPO_SUBTEXTS;
+  if (sourceType === "PDF") return PDF_SUBTEXTS;
+  if (sourceType === "NOTEBOOK") {
+    return {
+      ...PDF_SUBTEXTS,
+      fetching: [
+        "Streaming Jupyter Notebook JSON...",
+        "Skipping binary plot outputs...",
+        "Pairing markdown explanations with code cells...",
+      ],
+      chunking: [
+        "Segmenting notebook cells...",
+        "Mapping cell and heading coordinates...",
+        "Preparing 64-chunk embedding batches...",
+      ],
+      done: ["Notebook online.", "Comms channel unlocked.", "Telemetry nominal."],
+    };
+  }
+  if (sourceType === "IAC") {
+    return {
+      ...PDF_SUBTEXTS,
+      fetching: [
+        "Streaming infrastructure configuration...",
+        "Splitting Terraform blocks, Docker stages, or CI jobs...",
+        "Preserving block signatures and line numbers...",
+      ],
+      chunking: [
+        "Segmenting infrastructure blocks...",
+        "Mapping block & line coordinates...",
+        "Preparing 64-chunk embedding batches...",
+      ],
+      done: ["Config online.", "Comms channel unlocked.", "Telemetry nominal."],
+    };
+  }
+  return {
+    ...PDF_SUBTEXTS,
+    fetching: [
+      "Reading EPUB container and OPF spine...",
+      "Streaming XHTML chapters in linear order...",
+      "Preserving code blocks and headings...",
+    ],
+    chunking: [
+      "Segmenting chapters on paragraph boundaries...",
+      "Mapping chapter and section coordinates...",
+      "Preparing 64-chunk embedding batches...",
+    ],
+    done: ["EPUB online.", "Comms channel unlocked.", "Telemetry nominal."],
+  };
+}
+
 export function IndexingState({
   repo,
   status,
@@ -99,7 +157,9 @@ export function IndexingState({
   status?: IndexStatusResponse;
 }) {
   const indexMutation = useStartIndexing();
-  const isPdf = isPdfSource(repo);
+  const sourceType = effectiveSourceType(repo);
+  const uploaded = isUploadedSource(repo);
+  const typeMeta = getSourceTypeMeta(sourceType);
   const filesProcessed = status?.filesProcessed ?? repo.filesProcessed;
   const filesTotal = status?.filesTotal ?? repo.filesTotal;
   const chunksTotal = status?.chunksTotal ?? repo.chunkCount;
@@ -122,7 +182,7 @@ export function IndexingState({
     if (indexStatus === "READY" || indexStatus === "FAILED") return;
 
     const stageKey = indexingStage ?? "fetching";
-    const subtextMap = isPdf ? PDF_SUBTEXTS : REPO_SUBTEXTS;
+    const subtextMap = getSubtextsForType(sourceType);
     const details = subtextMap[stageKey] ?? subtextMap.fetching;
 
     const allDetails = indexingDetail
@@ -143,7 +203,7 @@ export function IndexingState({
       window.clearTimeout(startTimer);
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [indexingStage, indexingDetail, indexStatus, isPdf]);
+  }, [indexingStage, indexingDetail, indexStatus, sourceType]);
 
   if (indexStatus === "FAILED") {
     return (
@@ -159,7 +219,7 @@ export function IndexingState({
             {errorMessage || "Indexing sequence aborted unexpectedly."}
           </EmptyDescription>
         </EmptyHeader>
-        {isPdf ? (
+        {uploaded ? (
           <Button variant="outline" render={<Link href="/dashboard" />}>
             <ArrowLeft data-icon="inline-start" />
             Back to Console
@@ -220,7 +280,7 @@ export function IndexingState({
   }
 
   const clampedProgress = Math.min(100, Math.max(progress, 5));
-  const unitLabel = isPdf ? "PAGES" : "FILES";
+  const unitLabel = typeMeta.unitPlural.toUpperCase();
 
   return (
     <div className="relative flex flex-1 flex-col items-center justify-center overflow-hidden p-4 sm:p-6">

@@ -5,5 +5,8 @@ package trace.backend.entity;
  */
 public enum SourceType {
     GITHUB_REPO,
-    PDF
+    PDF,
+    NOTEBOOK,
+    IAC,
+    EPUB
 }

@@ -6,7 +6,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
   ExternalLink,
-  FileText,
   GitBranch,
   Lock,
   MessageSquare,
@@ -18,11 +17,18 @@ import { IndexErrorAlert } from "@/components/dashboard/index-error-alert";
 import { LanguageBadge } from "@/components/dashboard/language-badge";
 import { IndexStatusBadge } from "@/components/dashboard/repo-status";
 import { LanguageIcon } from "@/components/icons/language-icon";
+import { SourceTypeIcon } from "@/components/icons/source-type-icon";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import { getRepoProgress, useStartIndexing } from "@/hooks/use-repos";
-import { api, formatFileSize, isPdfSource, type Repository } from "@/lib/api";
+import {
+  api,
+  formatFileSize,
+  getSourceTypeMeta,
+  isUploadedSource,
+  type Repository,
+} from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 
@@ -30,7 +36,8 @@ export function RepoCard({ repo }: { repo: Repository }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const indexMutation = useStartIndexing();
-  const isPdf = isPdfSource(repo);
+  const uploaded = isUploadedSource(repo);
+  const typeMeta = getSourceTypeMeta(repo.sourceType);
   const isIndexing =
     repo.indexStatus === "INDEXING" || indexMutation.isPending;
   const isFailed = repo.indexStatus === "FAILED";
@@ -52,7 +59,7 @@ export function RepoCard({ repo }: { repo: Repository }) {
   }
 
   function handlePrimary() {
-    if (repo.indexStatus === "READY" || isPdf) {
+    if (repo.indexStatus === "READY" || uploaded) {
       openChat();
       return;
     }
@@ -82,9 +89,9 @@ export function RepoCard({ repo }: { repo: Repository }) {
       <div className="border-b border-border/80 px-4 py-3.5">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
-            {isPdf ? (
+            {uploaded ? (
               <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-[2px] border border-border bg-background/80 text-foreground/85">
-                <FileText className="size-3.5" />
+                <SourceTypeIcon sourceType={repo.sourceType} className="size-3.5" />
               </div>
             ) : (
               <div className="mt-0.5 opacity-80 grayscale">
@@ -93,7 +100,7 @@ export function RepoCard({ repo }: { repo: Repository }) {
             )}
             <div className="min-w-0">
               <p className="truncate font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
-                {isPdf ? "PDF DOCUMENT" : repo.owner}
+                {uploaded ? typeMeta.label : repo.owner}
               </p>
               <h3 className="truncate font-heading text-base font-semibold tracking-[0.04em]">
                 {repo.name}
@@ -108,8 +115,8 @@ export function RepoCard({ repo }: { repo: Repository }) {
         {!isFailed && (
           <p className="line-clamp-2 min-h-10 text-xs leading-relaxed text-muted-foreground">
             {repo.description ||
-              (isPdf
-                ? "Indexed PDF document ready for page-cited queries."
+              (uploaded
+                ? `Indexed ${typeMeta.label.toLowerCase()} ready for grounded queries.`
                 : "No source specification provided.")}
           </p>
         )}
@@ -121,15 +128,16 @@ export function RepoCard({ repo }: { repo: Repository }) {
         )}
 
         <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px] tracking-[0.08em] text-muted-foreground uppercase">
-          {isPdf ? (
+          {uploaded ? (
             <>
               <span className="inline-flex items-center gap-1 rounded-[2px] border border-border px-2 py-0.5 text-foreground/85">
-                <FileText className="size-2.5" />
-                PDF
+                <SourceTypeIcon sourceType={repo.sourceType} className="size-2.5" />
+                {typeMeta.badge}
               </span>
               {repo.pageCount != null && repo.pageCount > 0 && (
                 <span className="tabular-telemetry rounded-[2px] border border-border px-2 py-0.5">
-                  {repo.pageCount} {repo.pageCount === 1 ? "page" : "pages"}
+                  {repo.pageCount}{" "}
+                  {repo.pageCount === 1 ? typeMeta.unitSingular : typeMeta.unitPlural}
                 </span>
               )}
               {repo.fileSizeBytes != null && repo.fileSizeBytes > 0 && (
@@ -195,7 +203,7 @@ export function RepoCard({ repo }: { repo: Repository }) {
       </div>
 
       <div className="mt-auto flex items-center justify-between gap-2 border-t border-border/80 bg-background/40 px-4 py-3">
-        {!isPdf && repo.htmlUrl ? (
+        {!uploaded && repo.htmlUrl ? (
           <Button
             nativeButton={false}
             variant="ghost"
@@ -213,7 +221,7 @@ export function RepoCard({ repo }: { repo: Repository }) {
           </Button>
         ) : (
           <span className="font-mono text-[10px] tracking-[0.12em] text-muted-foreground/75 uppercase">
-            {isPdf ? "UPLOADED" : ""}
+            {uploaded ? "UPLOADED" : ""}
           </span>
         )}
 
@@ -225,7 +233,7 @@ export function RepoCard({ repo }: { repo: Repository }) {
             </Button>
           )}
 
-          {!(isPdf && isFailed) && (
+          {!(uploaded && isFailed) && (
             <Button
               size="sm"
               variant={isFailed ? "outline" : "default"}

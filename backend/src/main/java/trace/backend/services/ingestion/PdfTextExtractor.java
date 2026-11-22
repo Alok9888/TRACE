@@ -2,10 +2,12 @@ package trace.backend.services.ingestion;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -17,6 +19,7 @@ import org.apache.pdfbox.pdmodel.encryption.InvalidPasswordException;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.springframework.stereotype.Component;
 
+import trace.backend.entity.SourceType;
 import trace.backend.exceptions.BadRequestException;
 
 /**
@@ -25,7 +28,29 @@ import trace.backend.exceptions.BadRequestException;
  * section heading detection, and clear rejection of scanned/image-only/encrypted PDFs.
  */
 @Component
-public class PdfTextExtractor {
+public class PdfTextExtractor implements DocumentExtractor {
+
+    @Override
+    public SourceType getSourceType() {
+        return SourceType.PDF;
+    }
+
+    @Override
+    public boolean supports(String originalFilename, String contentType) {
+        boolean hasExt = originalFilename != null
+                && originalFilename.toLowerCase(Locale.ROOT).endsWith(".pdf");
+        boolean hasMime = contentType != null
+                && contentType.toLowerCase(Locale.ROOT).contains("pdf");
+        return hasExt || hasMime;
+    }
+
+    @Override
+    public List<ExtractedSection> extract(Path tempFile, String originalFilename) {
+        ExtractionResult result = extract(tempFile.toFile());
+        return result.pages().stream()
+                .map(p -> new ExtractedSection(p.primaryHeading(), p.pageNumber(), p.text()))
+                .toList();
+    }
 
     public static final int MAX_PAGES = 400;
     private static final int MIN_EXTRACTABLE_ALNUM_CHARS = 40;

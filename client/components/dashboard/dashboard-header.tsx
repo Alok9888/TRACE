@@ -30,6 +30,9 @@ const sourceTypeFilters: { value: FilterSourceType; label: string }[] = [
   { value: "ALL", label: "All" },
   { value: "GITHUB_REPO", label: "GitHub" },
   { value: "PDF", label: "PDF" },
+  { value: "NOTEBOOK", label: "Notebook" },
+  { value: "IAC", label: "IaC" },
+  { value: "EPUB", label: "EPUB" },
 ];
 
 const statusFilters: { value: FilterStatus; label: string }[] = [

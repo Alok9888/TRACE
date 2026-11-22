@@ -14,10 +14,16 @@ import {
   ArrowRight,
   ArrowUp,
   ArrowUpRight,
+  BookOpen,
+  Check,
   ChevronDown,
+  FileCode2,
   FileText,
   GitBranch,
+  KeyRound,
+  Layers,
   Mail,
+  ServerCog,
 } from "lucide-react";
 
 import { BrandMark } from "@/components/layout/app-shell";
@@ -29,11 +35,12 @@ import {
   SpotlightCard,
   usePrefersReducedMotion,
 } from "@/components/landing/scroll-reveal";
-import { PdfUploadZone } from "@/components/landing/pdf-upload-zone";
 import {
-  PIPELINE_BEATS,
-  PipelineScrollytelling,
-} from "@/components/landing/pipeline-scrollytelling";
+  FileUploadZone,
+  type UploadFormat,
+} from "@/components/landing/file-upload-zone";
+import { CapabilitiesSection } from "@/components/landing/capabilities-section";
+import { McpAccessDialog } from "@/components/mcp/mcp-access-dialog";
 import { ModeToggle } from "@/components/ui/mode-toggle";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
@@ -41,7 +48,7 @@ import { warmUpStreamOrigin } from "@/lib/stream-chat";
 
 const CHAPTERS = [
   { id: "hero", num: "01", label: "Launch" },
-  { id: "architecture", num: "02", label: "Pipeline" },
+  { id: "capabilities", num: "02", label: "Capabilities" },
   { id: "latency", num: "03", label: "Benchmarks" },
   { id: "edge", num: "04", label: "Edge" },
   { id: "signature", num: "05", label: "Author" },
@@ -124,24 +131,135 @@ const EDGE_ROWS = [
   },
 ] as const;
 
-const HERO_NOUN_CANDIDATES = ["Repository", "PDF"] as const;
+const HERO_NOUN_CANDIDATES = ["Repository", "PDF", "Notebook", "Infra", "EPUB"] as const;
+
+type HeroSegment = "repo" | "pdf" | "devdocs";
+type DevDocsSubFormat = "notebook" | "iac" | "epub";
+
+const DEV_DOCS_OPTIONS: {
+  id: DevDocsSubFormat;
+  pillLabel: string;
+  title: string;
+  exts: string;
+  description: string;
+  noun: string;
+  tagline: string;
+}[] = [
+  {
+    id: "notebook",
+    pillLabel: "Jupyter",
+    title: "Jupyter Notebook",
+    exts: ".ipynb",
+    description: "Pairs markdown notes with code cells; strips plot bloat",
+    noun: "Notebook",
+    tagline: "Query notebook logic & data pipelines — plot bloat stripped automatically.",
+  },
+  {
+    id: "iac",
+    pillLabel: "IaC",
+    title: "IaC & CI/CD",
+    exts: ".tf, Dockerfile, .yml",
+    description: "Splits by Terraform resource, Docker stage, or CI job",
+    noun: "Infra",
+    tagline: "Inspect Terraform resources, Docker stages & CI workflows block by block.",
+  },
+  {
+    id: "epub",
+    pillLabel: "EPUB",
+    title: "EPUB Spec / Book",
+    exts: ".epub",
+    description: "Chapter-indexed technical books & architecture manuals",
+    noun: "EPUB",
+    tagline: "Navigate technical books & architecture specs chapter by chapter.",
+  },
+];
 
 export default function HomePage() {
-  const [sourceMode, setSourceMode] = useState<"repo" | "pdf">("repo");
+  const [heroSegment, setHeroSegment] = useState<HeroSegment>("repo");
+  const [devSubFormat, setDevSubFormat] = useState<DevDocsSubFormat>("notebook");
+  const [devMenuOpen, setDevMenuOpen] = useState(false);
+  const [focusedMenuIdx, setFocusedMenuIdx] = useState(0);
   const [repoUrl, setRepoUrl] = useState("");
   const [error, setError] = useState("");
   const [isClicked, setIsClicked] = useState(false);
 
+  const devMenuContainerRef = useRef<HTMLDivElement>(null);
+  const devMenuItemRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  const activeDevOption =
+    DEV_DOCS_OPTIONS.find((opt) => opt.id === devSubFormat) ?? DEV_DOCS_OPTIONS[0];
+  const activeUploadFormat: UploadFormat =
+    heroSegment === "pdf" ? "pdf" : devSubFormat;
+  const heroNoun =
+    heroSegment === "repo"
+      ? "Repository"
+      : heroSegment === "pdf"
+        ? "PDF"
+        : activeDevOption.noun;
+  const heroTagline =
+    heroSegment === "repo"
+      ? "Paste a GitHub URL. Get line-cited answers in seconds."
+      : heroSegment === "pdf"
+        ? "Drop any PDF document. Get page-cited answers in seconds."
+        : activeDevOption.tagline;
+
+  useEffect(() => {
+    if (!devMenuOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (
+        devMenuContainerRef.current &&
+        !devMenuContainerRef.current.contains(event.target as Node)
+      ) {
+        setDevMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setDevMenuOpen(false);
+      } else if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setFocusedMenuIdx((prev) => {
+          const next = (prev + 1) % DEV_DOCS_OPTIONS.length;
+          devMenuItemRefs.current[next]?.focus();
+          return next;
+        });
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setFocusedMenuIdx((prev) => {
+          const next = (prev - 1 + DEV_DOCS_OPTIONS.length) % DEV_DOCS_OPTIONS.length;
+          devMenuItemRefs.current[next]?.focus();
+          return next;
+        });
+      }
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [devMenuOpen]);
+
+  const handleDetectedUploadFormat = useCallback((detected: UploadFormat) => {
+    setError("");
+    setDevMenuOpen(false);
+    if (detected === "pdf") {
+      setHeroSegment("pdf");
+    } else {
+      setDevSubFormat(detected);
+      setHeroSegment("devdocs");
+    }
+  }, []);
+
   const [activeChapter, setActiveChapter] = useState(0);
-  const [activeBeat, setActiveBeat] = useState(0);
-  const [revealed, setRevealed] = useState<boolean[]>([true, true, false, false, false]);
+  const [mcpDialogOpen, setMcpDialogOpen] = useState(false);
+  const [revealed, setRevealed] = useState<boolean[]>([true, false, false, false, false]);
 
   const hasClickedRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRootRef = useRef<HTMLDivElement>(null);
   const heroStageRef = useRef<HTMLElement>(null);
   const progressBarRef = useRef<HTMLDivElement>(null);
-  const spineProgressRef = useRef<HTMLDivElement>(null);
   const heroBgRef = useRef<HTMLImageElement>(null);
   const orbitalBgRef = useRef<HTMLImageElement>(null);
   const ascentBgRef = useRef<HTMLImageElement>(null);
@@ -149,7 +267,6 @@ export default function HomePage() {
   const earthBgRef = useRef<HTMLImageElement>(null);
 
   const chapterStopsRef = useRef<(HTMLElement | null)[]>([null, null, null, null, null]);
-  const beatStopsRef = useRef<(HTMLDivElement | null)[]>([null, null, null]);
 
   const reducedMotion = usePrefersReducedMotion();
   const router = useRouter();
@@ -160,7 +277,7 @@ export default function HomePage() {
     warmUpStreamOrigin();
   }, []);
 
-  // Continuous 60fps scroll-driven telemetry: progress rail, parallax depth, and 3-beat scrollytelling
+  // Continuous 60fps scroll-driven telemetry: progress rail, parallax depth, and 5 discrete 100dvh chapters
   useEffect(() => {
     const root = scrollRootRef.current;
     if (!root) return;
@@ -178,29 +295,10 @@ export default function HomePage() {
         progressBarRef.current.style.transform = `scaleX(${globalProgress})`;
       }
 
-      // Pipeline track spans 1vh..3vh (3 beats: 0, 1, 2)
-      const beatCount = PIPELINE_BEATS.length;
-      const beatFloat = (scrollTop - vh) / vh;
-      const clampedBeatProgress = Math.min(1, Math.max(0, beatFloat / (beatCount - 1)));
-      if (spineProgressRef.current) {
-        spineProgressRef.current.style.transform = `scaleY(${0.2 + clampedBeatProgress * 0.8})`;
-      }
-
-      const nextBeat = Math.min(beatCount - 1, Math.max(0, Math.round(beatFloat)));
-      setActiveBeat((prev) => (prev === nextBeat ? prev : nextBeat));
-
-      let nextChapter = 0;
-      if (scrollTop < vh * 0.55) {
-        nextChapter = 0;
-      } else if (scrollTop < vh * (beatCount + 0.55)) {
-        nextChapter = 1;
-      } else if (scrollTop < vh * (beatCount + 1.55)) {
-        nextChapter = 2;
-      } else if (scrollTop < vh * (beatCount + 2.55)) {
-        nextChapter = 3;
-      } else {
-        nextChapter = 4;
-      }
+      const nextChapter = Math.min(
+        CHAPTERS.length - 1,
+        Math.max(0, Math.round(scrollTop / vh))
+      );
 
       setActiveChapter((prev) => (prev === nextChapter ? prev : nextChapter));
       setRevealed((prev) => {
@@ -216,19 +314,19 @@ export default function HomePage() {
           heroBgRef.current.style.transform = `translate3d(0, ${heroDelta * -46}px, 0) scale(${1.03 + heroDelta * 0.05})`;
         }
         if (orbitalBgRef.current) {
-          const orbDelta = Math.min(1, Math.max(0, clampedBeatProgress));
-          orbitalBgRef.current.style.transform = `translate3d(0, ${(orbDelta - 0.5) * -36}px, 0) scale(${1.05 + orbDelta * 0.06})`;
+          const capOffset = (scrollTop - vh) / vh;
+          orbitalBgRef.current.style.transform = `translate3d(0, ${capOffset * -36}px, 0) scale(${1.05 + Math.abs(capOffset) * 0.05})`;
         }
         if (ascentBgRef.current) {
-          const benchOffset = (scrollTop - vh * (beatCount + 1)) / vh;
+          const benchOffset = (scrollTop - vh * 2) / vh;
           ascentBgRef.current.style.transform = `translate3d(0, ${benchOffset * -42}px, 0) scale(${1.05 + Math.abs(benchOffset) * 0.05})`;
         }
         if (edgeBgRef.current) {
-          const edgeOffset = (scrollTop - vh * (beatCount + 2)) / vh;
+          const edgeOffset = (scrollTop - vh * 3) / vh;
           edgeBgRef.current.style.transform = `translate3d(0, ${edgeOffset * -38}px, 0) scale(${1.05 + Math.abs(edgeOffset) * 0.05})`;
         }
         if (earthBgRef.current) {
-          const sigOffset = (scrollTop - vh * (beatCount + 3)) / vh;
+          const sigOffset = (scrollTop - vh * 4) / vh;
           earthBgRef.current.style.transform = `translate3d(0, ${sigOffset * -32}px, 0) scale(${1.04 + Math.abs(sigOffset) * 0.04})`;
         }
       }
@@ -252,10 +350,7 @@ export default function HomePage() {
 
   const scrollToChapter = useCallback(
     (chapterIndex: number, focusInput = false) => {
-      const target =
-        chapterIndex === 1
-          ? beatStopsRef.current[0]
-          : chapterStopsRef.current[chapterIndex];
+      const target = chapterStopsRef.current[chapterIndex];
       if (!target) return;
       target.scrollIntoView({
         behavior: reducedMotion ? "auto" : "smooth",
@@ -267,22 +362,6 @@ export default function HomePage() {
     },
     [reducedMotion]
   );
-
-  const scrollToBeat = useCallback(
-    (beatIndex: number) => {
-      const target = beatStopsRef.current[beatIndex];
-      if (!target) return;
-      target.scrollIntoView({
-        behavior: reducedMotion ? "auto" : "smooth",
-        block: "start",
-      });
-    },
-    [reducedMotion]
-  );
-
-  const registerBeatStop = useCallback((beatIndex: number, el: HTMLDivElement | null) => {
-    beatStopsRef.current[beatIndex] = el;
-  }, []);
 
   function handleHeroPointerMove(e: ReactPointerEvent<HTMLElement>) {
     if (reducedMotion || !heroStageRef.current) return;
@@ -335,13 +414,18 @@ export default function HomePage() {
             <BrandMark />
           </button>
 
-          <div className="flex items-center gap-4 sm:gap-5">
+          <div className="flex items-center gap-3.5 sm:gap-5">
             <span className="tabular-telemetry hidden font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase md:inline">
               {CHAPTERS[activeChapter]?.num} / 0{CHAPTERS.length} ·{" "}
-              {activeChapter === 1
-                ? PIPELINE_BEATS[activeBeat]?.shortLabel
-                : CHAPTERS[activeChapter]?.label}
+              {CHAPTERS[activeChapter]?.label}
             </span>
+            <Link
+              href="/docs"
+              className="group relative font-heading text-xs font-semibold tracking-[0.16em] text-muted-foreground uppercase transition-colors hover:text-foreground"
+            >
+              <span>Docs</span>
+              <span className="absolute -bottom-1 left-0 h-px w-full origin-left scale-x-0 bg-foreground transition-transform duration-300 group-hover:scale-x-100" />
+            </Link>
             <Link
               href="/dashboard"
               className="group relative font-heading text-xs font-semibold tracking-[0.16em] text-muted-foreground uppercase transition-colors hover:text-foreground"
@@ -432,46 +516,154 @@ export default function HomePage() {
 
             {/* Clean centered/editorial focal stack */}
             <div className="max-w-2xl space-y-5 sm:space-y-7">
-              {/* Minimal segmented source mode switcher */}
-              <div
-                className="hero-mask-reveal inline-flex items-center rounded-[2px] border border-border/90 bg-background/80 p-0.5 backdrop-blur-md"
-                style={{ animationDelay: "20ms" }}
-                role="tablist"
-                aria-label="Knowledge source type"
-              >
+              {/* 3-segment source mode switcher + quiet MCP access trigger */}
+              <div className="hero-mask-reveal relative z-20 flex flex-wrap items-center gap-2.5" style={{ animationDelay: "20ms" }}>
+                <div
+                  ref={devMenuContainerRef}
+                  className="relative inline-block"
+                >
+                <div
+                  className="inline-flex items-center rounded-[2px] border border-border/90 bg-background/85 p-0.5 backdrop-blur-md"
+                  role="tablist"
+                  aria-label="Knowledge source type"
+                >
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={heroSegment === "repo"}
+                    onClick={() => {
+                      setHeroSegment("repo");
+                      setDevMenuOpen(false);
+                      setError("");
+                    }}
+                    className={`inline-flex items-center gap-1.5 rounded-[1px] px-3 py-1.5 font-mono text-[10px] font-medium tracking-[0.16em] uppercase transition-all duration-200 ${
+                      heroSegment === "repo"
+                        ? "bg-foreground text-background"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <GitBranch className="size-3" />
+                    <span>GitHub</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={heroSegment === "pdf"}
+                    onClick={() => {
+                      setHeroSegment("pdf");
+                      setDevMenuOpen(false);
+                      setError("");
+                    }}
+                    className={`inline-flex items-center gap-1.5 rounded-[1px] px-3 py-1.5 font-mono text-[10px] font-medium tracking-[0.16em] uppercase transition-all duration-200 ${
+                      heroSegment === "pdf"
+                        ? "bg-foreground text-background"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <FileText className="size-3" />
+                    <span>PDF</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={heroSegment === "devdocs"}
+                    aria-haspopup="menu"
+                    aria-expanded={devMenuOpen}
+                    onClick={() => {
+                      setHeroSegment("devdocs");
+                      setDevMenuOpen((open) => !open);
+                      setError("");
+                    }}
+                    className={`inline-flex items-center gap-1.5 rounded-[1px] px-3 py-1.5 font-mono text-[10px] font-medium tracking-[0.16em] uppercase transition-all duration-200 ${
+                      heroSegment === "devdocs"
+                        ? "bg-foreground text-background"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <Layers className="size-3" />
+                    <span>
+                      {heroSegment === "devdocs" ? activeDevOption.pillLabel : "Dev Docs"}
+                    </span>
+                    <ChevronDown
+                      className={`size-3 transition-transform duration-200 ${
+                        devMenuOpen ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {devMenuOpen && (
+                  <div
+                    role="menu"
+                    aria-label="Developer document formats"
+                    className="absolute top-full left-0 z-30 mt-1.5 w-[min(22rem,calc(100vw-2rem))] rounded-[2px] border border-border bg-card/95 p-1 shadow-xl backdrop-blur-md"
+                  >
+                    {DEV_DOCS_OPTIONS.map((option, idx) => {
+                      const isSelected = heroSegment === "devdocs" && devSubFormat === option.id;
+                      const OptionIcon =
+                        option.id === "notebook"
+                          ? FileCode2
+                          : option.id === "iac"
+                            ? ServerCog
+                            : BookOpen;
+                      return (
+                        <button
+                          key={option.id}
+                          ref={(el) => {
+                            devMenuItemRefs.current[idx] = el;
+                          }}
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={isSelected}
+                          onMouseEnter={() => setFocusedMenuIdx(idx)}
+                          onClick={() => {
+                            setDevSubFormat(option.id);
+                            setHeroSegment("devdocs");
+                            setDevMenuOpen(false);
+                            setError("");
+                          }}
+                          className={`flex w-full items-start gap-3 rounded-[1px] px-3 py-2.5 text-left transition-colors focus-visible:outline-none ${
+                            isSelected || focusedMenuIdx === idx
+                              ? "bg-foreground/[0.08] text-foreground"
+                              : "text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground"
+                          }`}
+                        >
+                          <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-[2px] border border-border bg-background/80 text-foreground">
+                            <OptionIcon className="size-3.5" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-heading text-xs font-semibold tracking-[0.08em] text-foreground uppercase">
+                                {option.title}
+                              </span>
+                              <span className="font-mono text-[9px] tracking-[0.08em] text-muted-foreground">
+                                {option.exts}
+                              </span>
+                            </div>
+                            <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+                              {option.description}
+                            </p>
+                          </div>
+                          {isSelected && (
+                            <Check className="mt-1 size-3.5 shrink-0 text-foreground" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                </div>
+
                 <button
                   type="button"
-                  role="tab"
-                  aria-selected={sourceMode === "repo"}
-                  onClick={() => {
-                    setSourceMode("repo");
-                    setError("");
-                  }}
-                  className={`inline-flex items-center gap-1.5 rounded-[1px] px-3 py-1.5 font-mono text-[10px] font-medium tracking-[0.16em] uppercase transition-all duration-200 ${
-                    sourceMode === "repo"
-                      ? "bg-foreground text-background"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
+                  onClick={() => setMcpDialogOpen(true)}
+                  className="group inline-flex items-center gap-1.5 rounded-[2px] border border-border/80 bg-background/75 px-3 py-1.5 font-mono text-[10px] font-medium tracking-[0.14em] text-muted-foreground uppercase backdrop-blur-md transition-all duration-200 hover:border-foreground hover:text-foreground"
                 >
-                  <GitBranch className="size-3" />
-                  <span>GitHub Repo</span>
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={sourceMode === "pdf"}
-                  onClick={() => {
-                    setSourceMode("pdf");
-                    setError("");
-                  }}
-                  className={`inline-flex items-center gap-1.5 rounded-[1px] px-3 py-1.5 font-mono text-[10px] font-medium tracking-[0.16em] uppercase transition-all duration-200 ${
-                    sourceMode === "pdf"
-                      ? "bg-foreground text-background"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  <FileText className="size-3" />
-                  <span>PDF</span>
+                  <KeyRound className="size-3 text-foreground/80" />
+                  <span>MCP Access</span>
+                  <ArrowUpRight className="size-3 opacity-60 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:opacity-100" />
                 </button>
               </div>
 
@@ -482,18 +674,16 @@ export default function HomePage() {
                 >
                   Interrogate Any{" "}
                   <DynamicNounTypewriter
-                    target={sourceMode === "repo" ? "Repository" : "PDF"}
+                    target={heroNoun}
                     candidates={HERO_NOUN_CANDIDATES}
                     reducedMotion={reducedMotion}
                   />
                 </h1>
                 <p
-                  className="hero-mask-reveal max-w-md text-sm leading-relaxed text-muted-foreground sm:text-lg"
+                  className="hero-mask-reveal max-w-lg text-sm leading-relaxed text-muted-foreground sm:text-lg"
                   style={{ animationDelay: "150ms" }}
                 >
-                  {sourceMode === "repo"
-                    ? "Paste a GitHub URL. Get line-cited answers in seconds."
-                    : "Drop any PDF document. Get page-cited answers in seconds."}
+                  {heroTagline}
                 </p>
               </div>
 
@@ -501,7 +691,7 @@ export default function HomePage() {
                 className="hero-mask-reveal min-h-[108px] space-y-3 sm:min-h-[96px]"
                 style={{ animationDelay: "230ms" }}
               >
-                {sourceMode === "repo" ? (
+                {heroSegment === "repo" ? (
                   <>
                     <div className="group/bar flex flex-col border border-input bg-background/85 backdrop-blur-sm transition-all duration-200 hover:border-foreground/50 focus-within:border-foreground sm:flex-row">
                       <div className="flex min-w-0 flex-1 items-center">
@@ -569,7 +759,9 @@ export default function HomePage() {
                     )}
                   </>
                 ) : (
-                  <PdfUploadZone
+                  <FileUploadZone
+                    format={activeUploadFormat}
+                    onFormatDetected={handleDetectedUploadFormat}
                     onUploaded={(source) => {
                       router.push(`/chat/${source.id}`);
                     }}
@@ -589,7 +781,7 @@ export default function HomePage() {
                   <span className="scroll-drop-beam absolute inset-x-0 top-0 h-2 bg-foreground group-hover:bg-background" />
                 </span>
 
-                <span>Scroll · See How It Works</span>
+                <span>Scroll · Capabilities &amp; MCP</span>
 
                 <span className="flex flex-col -space-y-2" aria-hidden="true">
                   <ChevronDown className="scroll-chevron size-3" />
@@ -602,14 +794,15 @@ export default function HomePage() {
         </section>
 
         {/* =====================================================================
-            SECTION 02 — SCROLLYTELLING PIPELINE (3 pinned 100dvh beats)
+            SECTION 02 — CAPABILITIES & MCP SHOWCASE (100dvh, zero bleed)
            ===================================================================== */}
-        <PipelineScrollytelling
-          activeBeat={activeBeat}
-          spineProgressRef={spineProgressRef}
-          orbitalBgRef={orbitalBgRef}
-          registerBeatStop={registerBeatStop}
-          onSelectBeat={scrollToBeat}
+        <CapabilitiesSection
+          visible={revealed[1]}
+          sectionRef={(el) => {
+            chapterStopsRef.current[1] = el;
+          }}
+          bgRef={orbitalBgRef}
+          onOpenMcpModal={() => setMcpDialogOpen(true)}
           onNextSection={() => scrollToChapter(2)}
         />
 
@@ -911,6 +1104,8 @@ export default function HomePage() {
           </div>
         </section>
       </div>
+
+      <McpAccessDialog open={mcpDialogOpen} onOpenChange={setMcpDialogOpen} />
     </div>
   );
 }

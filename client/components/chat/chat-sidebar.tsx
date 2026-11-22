@@ -2,9 +2,10 @@
 
 import { memo, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { ChevronDown, FileText, Plus, RotateCcw, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, Plus, RotateCcw, SlidersHorizontal } from "lucide-react";
 
 import { IndexStatusBadge } from "@/components/dashboard/repo-status";
+import { SourceTypeIcon } from "@/components/icons/source-type-icon";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -14,7 +15,12 @@ import {
   useCreateChatSession,
 } from "@/hooks/use-chat";
 import { useStartIndexing } from "@/hooks/use-repos";
-import { formatFileSize, isPdfSource, type Repository } from "@/lib/api";
+import {
+  formatFileSize,
+  getSourceTypeMeta,
+  isUploadedSource,
+  type Repository,
+} from "@/lib/api";
 import {
   CHAT_CONFIG_LIMITS,
   DEFAULT_CHAT_CONFIG,
@@ -93,7 +99,8 @@ export const ChatSidebar = memo(function ChatSidebar({
   onConfigChange: (next: ChatConfig) => void;
 }) {
   const ready = repo.indexStatus === "READY";
-  const isPdf = isPdfSource(repo);
+  const uploaded = isUploadedSource(repo);
+  const typeMeta = getSourceTypeMeta(repo.sourceType);
   const sessionsQuery = useChatSessions(repo.id, ready);
   const createSession = useCreateChatSession(repo.id);
   const reindex = useStartIndexing();
@@ -169,7 +176,7 @@ export const ChatSidebar = memo(function ChatSidebar({
             <Plus className="size-3" />
             New
           </Button>
-          {!isPdf && (
+          {!uploaded && (
             <Button
               size="icon-xs"
               variant="outline"
@@ -186,21 +193,27 @@ export const ChatSidebar = memo(function ChatSidebar({
       {/* Desktop source header */}
       <div className="hidden space-y-3.5 p-4 md:block">
         <div className="space-y-1.5">
-          <p className="flex items-center gap-1.5 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
-            {isPdf && <FileText className="size-3" />}
-            <span>{isPdf ? "TARGET DOCUMENT" : "TARGET SOURCE"}</span>
-          </p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="flex items-center gap-1.5 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+              <SourceTypeIcon sourceType={repo.sourceType} className="size-3" />
+              <span>TARGET SOURCE</span>
+            </p>
+            <span className="rounded-[2px] border border-border px-1.5 py-0.5 font-mono text-[9px] tracking-[0.14em] text-foreground/85 uppercase">
+              {typeMeta.badge}
+            </span>
+          </div>
           <p className="truncate font-heading text-sm font-semibold tracking-[0.06em]">
             {repo.fullName}
           </p>
           <div className="flex flex-wrap items-center gap-2 pt-0.5">
             <IndexStatusBadge status={repo.indexStatus} />
-            {isPdf && repo.pageCount != null && repo.pageCount > 0 && (
+            {uploaded && repo.pageCount != null && repo.pageCount > 0 && (
               <span className="tabular-telemetry font-mono text-[10px] tracking-[0.1em] text-muted-foreground uppercase">
-                {repo.pageCount} {repo.pageCount === 1 ? "PAGE" : "PAGES"}
+                {repo.pageCount}{" "}
+                {repo.pageCount === 1 ? typeMeta.unitSingular : typeMeta.unitPlural}
               </span>
             )}
-            {isPdf && repo.fileSizeBytes != null && repo.fileSizeBytes > 0 && (
+            {uploaded && repo.fileSizeBytes != null && repo.fileSizeBytes > 0 && (
               <span className="tabular-telemetry font-mono text-[10px] tracking-[0.1em] text-muted-foreground uppercase">
                 {formatFileSize(repo.fileSizeBytes)}
               </span>
@@ -210,7 +223,7 @@ export const ChatSidebar = memo(function ChatSidebar({
                 {repo.chunkCount.toLocaleString()} VECTORS
               </span>
             )}
-            {!isPdf && repo.isPrivate && (
+            {!uploaded && repo.isPrivate && (
               <span className="font-mono text-[10px] tracking-[0.12em] text-muted-foreground uppercase">
                 PRIVATE
               </span>
@@ -235,7 +248,7 @@ export const ChatSidebar = memo(function ChatSidebar({
             <Plus data-icon="inline-start" />
             New Channel
           </Button>
-          {!isPdf && (
+          {!uploaded && (
             <Button
               size="sm"
               variant="outline"

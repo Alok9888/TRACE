@@ -356,9 +356,13 @@ public class ChatStreamHandler {
             trace.backend.entity.SourceType sourceType = streamContext.effectiveSourceType();
             String systemPrompt = chatPromptBuilder.systemPrompt(
                     streamContext.repositoryName(), sourceType, queryTier, config.systemPrompt());
-            String emptyMatchText = sourceType == trace.backend.entity.SourceType.PDF
-                    ? "No relevant document passages matched the current similarity threshold.\n\nUser question:\n" + question
-                    : "No relevant code chunks matched the current similarity threshold.\n\nUser question:\n" + question;
+            String emptyMatchText = switch (sourceType) {
+                case PDF -> "No relevant document passages matched the current similarity threshold.\n\nUser question:\n" + question;
+                case EPUB -> "No relevant book chapters matched the current similarity threshold.\n\nUser question:\n" + question;
+                case NOTEBOOK -> "No relevant notebook cells matched the current similarity threshold.\n\nUser question:\n" + question;
+                case IAC -> "No relevant infrastructure blocks matched the current similarity threshold.\n\nUser question:\n" + question;
+                default -> "No relevant code chunks matched the current similarity threshold.\n\nUser question:\n" + question;
+            };
             String prompt = queryTier == ChatPromptBuilder.QueryTier.TRIVIAL
                     ? question
                     : (retrievedContext.citations().isEmpty()

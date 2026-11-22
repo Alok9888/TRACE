@@ -46,12 +46,12 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     ResponseEntity<Map<String, Object>> handleMaxUploadSize(MaxUploadSizeExceededException ex) {
-        return error(HttpStatus.CONTENT_TOO_LARGE, "PDF exceeds maximum upload size of 20 MB.");
+        return error(HttpStatus.CONTENT_TOO_LARGE, "File exceeds maximum upload size of 20 MB.");
     }
 
     @ExceptionHandler(MultipartException.class)
     ResponseEntity<Map<String, Object>> handleMultipart(MultipartException ex) {
-        return error(HttpStatus.BAD_REQUEST, "Invalid file upload request. Please upload a valid PDF file.");
+        return error(HttpStatus.BAD_REQUEST, "Invalid file upload request. Please upload a supported document.");
     }
 
     @ExceptionHandler(Exception.class)

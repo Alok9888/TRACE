@@ -106,7 +106,7 @@ export function OverviewDashboard() {
             <StatCard
               label="Sources"
               value={repos.length}
-              hint="Repos & PDF documents"
+              hint="Repos, PDF, Notebook, IaC & EPUB"
               icon={Layers}
             />
             <StatCard

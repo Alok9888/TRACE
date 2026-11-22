@@ -1,5 +1,6 @@
 -- =============================================================================
--- TRACE Multi-Source RAG Migration (GitHub Repositories + PDF Documents)
+-- TRACE Multi-Source RAG Migration
+-- Supported source_type values: GITHUB_REPO, PDF, NOTEBOOK, IAC, EPUB
 -- Reversible migration for PostgreSQL / Neon.
 -- Note: Hibernate ddl-auto=update also adds nullable columns automatically,
 -- and this script ensures existing rows are backfilled with source_type='GITHUB_REPO'

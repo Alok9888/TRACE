@@ -31,7 +31,7 @@ public class CodeFileFilter {
             "yml", "yaml", "json", "toml", "xml",
             "properties", "gradle", "sql",
             "sh", "bash", "zsh",
-            "dockerfile", "makefile",
+            "tf", "dockerfile", "makefile",
             "html", "css", "scss", "sass",
             "vue", "svelte");
 

@@ -26,7 +26,13 @@ export const ChatComposer = memo(function ChatComposer({
   const placeholder =
     sourceType === "PDF"
       ? "Query sections, claims, or specific pages..."
-      : "Query architecture, execution flows, or indexed context...";
+      : sourceType === "EPUB"
+        ? "Query chapters, concepts, or technical patterns..."
+        : sourceType === "NOTEBOOK"
+          ? "Query notebook cells, pipelines, or metrics..."
+          : sourceType === "IAC"
+            ? "Query Terraform resources, Docker stages, or CI jobs..."
+            : "Query architecture, execution flows, or indexed context...";
 
   async function submit() {
     const content = value.trim();

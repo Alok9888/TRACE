@@ -114,9 +114,9 @@ public class RepoController {
     public ResponseEntity<RepositoryResponse> index(@PathVariable UUID id) {
         UUID workspaceId = workspaceContext.getWorkspaceId();
         Repository existing = repoService.requireOwned(id, workspaceId);
-        if (existing.effectiveSourceType() == trace.backend.entity.SourceType.PDF) {
+        if (existing.effectiveSourceType() != trace.backend.entity.SourceType.GITHUB_REPO) {
             throw new trace.backend.exceptions.BadRequestException(
-                    "PDF documents cannot be re-indexed from GitHub. Upload a new PDF instead.");
+                    "Uploaded files cannot be re-indexed from GitHub. Upload a new file instead.");
         }
         Repository repo = indexingService.startIndexing(id, workspaceId);
         indexingService.indexAsync(id, workspaceId);

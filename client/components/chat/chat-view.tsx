@@ -18,6 +18,7 @@ import {
   useStreamChat,
 } from "@/hooks/use-chat";
 import { useIndexStatus, useIndexStatusByUrl, useRepository } from "@/hooks/use-repos";
+import { getSourceTypeMeta } from "@/lib/api";
 import {
   loadChatConfig,
   saveChatConfig,
@@ -241,15 +242,17 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
     );
   }
 
+  const typeMeta = getSourceTypeMeta(repo.sourceType);
+
   return (
     <AppShell
       title={repo.fullName}
       description={
         ready
           ? repo.chunkCount > 0
-            ? `COMMS ONLINE // ${repo.chunkCount.toLocaleString()} VECTORS INDEXED`
-            : "COMMS ONLINE // GROUNDED IN INDEXED CONTEXT"
-          : "INGESTION SEQUENCE IN PROGRESS"
+            ? `${typeMeta.badge} // COMMS ONLINE // ${repo.chunkCount.toLocaleString()} VECTORS INDEXED`
+            : `${typeMeta.badge} // COMMS ONLINE // GROUNDED IN INDEXED CONTEXT`
+          : `${typeMeta.badge} // INGESTION SEQUENCE IN PROGRESS`
       }
       actions={
         <Button variant="outline" size="sm" render={<Link href="/dashboard" />}>

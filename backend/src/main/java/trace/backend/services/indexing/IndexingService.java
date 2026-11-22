@@ -40,6 +40,7 @@ import org.springframework.stereotype.Service;
 
 import trace.backend.entity.IndexStatus;
 import trace.backend.entity.Repository;
+import trace.backend.entity.SourceType;
 import trace.backend.exceptions.NotFoundException;
 import trace.backend.repository.RepositoryRepository;
 import trace.backend.services.ai.ChatContextCache;
@@ -47,6 +48,9 @@ import trace.backend.services.ai.RagSettings;
 import trace.backend.services.embedding.CloudflareEmbeddingService;
 import trace.backend.services.github.GitHubRateLimiter;
 import trace.backend.services.github.GithubApiClient;
+import trace.backend.services.ingestion.ExtractedSection;
+import trace.backend.services.ingestion.IacExtractor;
+import trace.backend.services.ingestion.SemanticChunker;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -86,6 +90,12 @@ public class IndexingService {
 
     @Autowired(required = false)
     private ChatContextCache chatContextCache;
+
+    @Autowired(required = false)
+    private IacExtractor iacExtractor;
+
+    @Autowired(required = false)
+    private SemanticChunker semanticChunker;
 
     @Value("${app.indexing.max-file-bytes:102400}")
     private long maxFileBytes;
@@ -389,7 +399,7 @@ public class IndexingService {
                         maxFileBytes,
                         (path, size) -> targetPaths.contains(path) && fileFilter.isEligible(path, size, maxFileBytes),
                         (path, content) -> {
-                            List<Document> chunks = codeChunker.chunkFile(userId, repoId.toString(), path, content);
+                            List<Document> chunks = chunkRepoFile(userId, repoId.toString(), path, content);
                             int done = filesDone.incrementAndGet();
                             flusher.addChunks(chunks, done);
                         });
@@ -421,7 +431,7 @@ public class IndexingService {
                         }
                         int done = filesDone.incrementAndGet();
                         if (content != null) {
-                            List<Document> chunks = codeChunker.chunkFile(userId, repoId.toString(), path, content);
+                            List<Document> chunks = chunkRepoFile(userId, repoId.toString(), path, content);
                             flusher.addChunks(chunks, done);
                         } else {
                             updateIndexingStatus(repoId, "fetching", "Fetching files...",
@@ -448,6 +458,25 @@ public class IndexingService {
 
         flusher.flushRemainingAndAwait();
         return new StreamingStats(mode, filesDone.get(), flusher.getTotalChunks());
+    }
+
+    /**
+     * Routes Terraform, Dockerfile, Docker Compose, and GitHub Actions YAML files inside GitHub repos
+     * through {@link IacExtractor} + {@link SemanticChunker} for block-level precision while preserving
+     * GitHub filePath/line citation compatibility; all other source files use {@link CodeChunker}.
+     */
+    private List<Document> chunkRepoFile(UUID userId, String repoId, String path, String content) {
+        if (iacExtractor != null && semanticChunker != null && iacExtractor.isIacPath(path)) {
+            List<ExtractedSection> blocks = iacExtractor.extractFromString(content, path);
+            if (!blocks.isEmpty()) {
+                List<Document> docs = semanticChunker.chunkSections(userId, repoId, SourceType.IAC, path, blocks);
+                for (Document doc : docs) {
+                    doc.getMetadata().put(RagSettings.METADATA_SOURCE_TYPE, SourceType.GITHUB_REPO.name());
+                }
+                return docs;
+            }
+        }
+        return codeChunker.chunkFile(userId, repoId, path, content);
     }
 
     /**

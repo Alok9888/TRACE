@@ -21,11 +21,18 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import trace.backend.dto.CitationDto;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class CodeContextRetriever {
+    public record SearchHit(
+            String content,
+            double score,
+            String sourceId,
+            CitationDto citation) {}
+
     private static final String NO_MATCHES = "(no matching code chunks found)";
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
@@ -263,6 +270,162 @@ public class CodeContextRetriever {
             }
             return vectorStore.similaritySearch(search);
         }
+    }
+
+    /**
+     * Strictly workspace-scoped semantic vector search for MCP tools.
+     * Enforces {@code (metadata->>'userId') = ?} on every query so cross-tenant reads are impossible.
+     * When {@code optionalSourceId} is null, searches across all indexed sources belonging to {@code userId}.
+     */
+    public List<SearchHit> searchForWorkspace(
+            UUID userId,
+            UUID optionalSourceId,
+            String question,
+            int topK,
+            double similarityThreshold) {
+        if (userId == null || question == null || question.isBlank()) {
+            return List.of();
+        }
+        int effectiveTopK = Math.max(1, Math.min(15, topK));
+        double effectiveThreshold = Math.max(0.0, Math.min(1.0, similarityThreshold));
+        double maxDistance = 1.0 - effectiveThreshold;
+
+        if (embeddingModel != null && jdbcTemplate != null) {
+            float[] queryVector = embeddingModel.embed(question);
+            String vectorLiteral = toPgVectorLiteral(queryVector);
+            String table = (vectorTableName == null || vectorTableName.isBlank())
+                    ? "trace_vectors_cf_384" : vectorTableName;
+
+            if (optionalSourceId != null) {
+                String sql = "WITH q AS (SELECT ?::vector AS v), "
+                        + "ranked AS ( "
+                        + "  SELECT id, (embedding <=> q.v) AS dist "
+                        + "  FROM " + table + ", q "
+                        + "  WHERE (metadata->>'repoId') = ? "
+                        + "    AND (metadata->>'userId') = ? "
+                        + "    AND (embedding <=> q.v) <= ? "
+                        + "  ORDER BY dist ASC "
+                        + "  LIMIT ? "
+                        + ") "
+                        + "SELECT t.content, t.metadata::text AS metadata_json, (1 - r.dist) AS score "
+                        + "FROM ranked r "
+                        + "JOIN " + table + " t ON t.id = r.id "
+                        + "ORDER BY r.dist ASC";
+                return jdbcTemplate.query(
+                        sql,
+                        (rs, rowNum) -> mapSearchHit(rs.getString("content"), rs.getString("metadata_json"), rs.getDouble("score")),
+                        vectorLiteral,
+                        optionalSourceId.toString(),
+                        userId.toString(),
+                        maxDistance,
+                        effectiveTopK);
+            }
+
+            String sql = "WITH q AS (SELECT ?::vector AS v), "
+                    + "ranked AS ( "
+                    + "  SELECT id, (embedding <=> q.v) AS dist "
+                    + "  FROM " + table + ", q "
+                    + "  WHERE (metadata->>'userId') = ? "
+                    + "    AND (embedding <=> q.v) <= ? "
+                    + "  ORDER BY dist ASC "
+                    + "  LIMIT ? "
+                    + ") "
+                    + "SELECT t.content, t.metadata::text AS metadata_json, (1 - r.dist) AS score "
+                    + "FROM ranked r "
+                    + "JOIN " + table + " t ON t.id = r.id "
+                    + "ORDER BY r.dist ASC";
+            return jdbcTemplate.query(
+                    sql,
+                    (rs, rowNum) -> mapSearchHit(rs.getString("content"), rs.getString("metadata_json"), rs.getDouble("score")),
+                    vectorLiteral,
+                    userId.toString(),
+                    maxDistance,
+                    effectiveTopK);
+        }
+
+        // Fallback via VectorStore when direct JDBC/EmbeddingModel isn't wired
+        String filterExpression = optionalSourceId != null
+                ? RagSettings.METADATA_REPO_ID + " == '" + optionalSourceId + "' && "
+                        + RagSettings.METADATA_USER_ID + " == '" + userId + "'"
+                : RagSettings.METADATA_USER_ID + " == '" + userId + "'";
+        var search = SearchRequest.builder()
+                .query(question)
+                .topK(effectiveTopK)
+                .similarityThreshold(effectiveThreshold)
+                .filterExpression(filterExpression)
+                .build();
+        List<Document> docs = executeVectorSearch(search);
+        if (docs == null) {
+            return List.of();
+        }
+        return docs.stream()
+                .filter(d -> d.getScore() == null || d.getScore() >= effectiveThreshold)
+                .map(d -> new SearchHit(
+                        d.getText() == null ? "" : d.getText(),
+                        d.getScore() == null ? 0.0 : d.getScore(),
+                        String.valueOf(d.getMetadata().getOrDefault(RagSettings.METADATA_REPO_ID, "")),
+                        citationMapper.fromDocument(d)))
+                .toList();
+    }
+
+    /**
+     * Retrieves ordered chunks directly from a specific owned source (by filePath, unit/page number, or offset).
+     * Strictly enforces both {@code userId} and {@code repoId} tenant filters in SQL.
+     */
+    public List<SearchHit> fetchSourceChunks(
+            UUID userId,
+            UUID sourceId,
+            String optionalFilePath,
+            Integer optionalUnitNumber,
+            int offset,
+            int limit) {
+        if (userId == null || sourceId == null || jdbcTemplate == null) {
+            return List.of();
+        }
+        int safeLimit = Math.max(1, Math.min(20, limit));
+        int safeOffset = Math.max(0, offset);
+        String table = (vectorTableName == null || vectorTableName.isBlank())
+                ? "trace_vectors_cf_384" : vectorTableName;
+
+        StringBuilder sql = new StringBuilder();
+        List<Object> params = new ArrayList<>();
+        sql.append("SELECT content, metadata::text AS metadata_json FROM ").append(table)
+                .append(" WHERE (metadata->>'repoId') = ? AND (metadata->>'userId') = ? ");
+        params.add(sourceId.toString());
+        params.add(userId.toString());
+
+        if (optionalFilePath != null && !optionalFilePath.isBlank()) {
+            sql.append(" AND (metadata->>'filePath') = ? ");
+            params.add(optionalFilePath.trim());
+        }
+        if (optionalUnitNumber != null && optionalUnitNumber > 0) {
+            sql.append(" AND ((metadata->>'pageNumber') = ? OR (metadata->>'startLine') = ?) ");
+            String unitStr = String.valueOf(optionalUnitNumber);
+            params.add(unitStr);
+            params.add(unitStr);
+        }
+
+        sql.append(" ORDER BY COALESCE(NULLIF(metadata->>'chunkIndex', '')::int, 0) ASC LIMIT ? OFFSET ?");
+        params.add(safeLimit);
+        params.add(safeOffset);
+
+        return jdbcTemplate.query(
+                sql.toString(),
+                (rs, rowNum) -> mapSearchHit(rs.getString("content"), rs.getString("metadata_json"), 1.0),
+                params.toArray());
+    }
+
+    private SearchHit mapSearchHit(String content, String metaJson, double score) {
+        Map<String, Object> metadata = parseMetadata(metaJson);
+        Document doc = Document.builder()
+                .text(content == null ? "" : content)
+                .metadata(metadata)
+                .score(score)
+                .build();
+        String sourceId = metadata.get(RagSettings.METADATA_REPO_ID) != null
+                ? String.valueOf(metadata.get(RagSettings.METADATA_REPO_ID))
+                : "";
+        return new SearchHit(content == null ? "" : content, score, sourceId, citationMapper.fromDocument(doc));
     }
 
     private static String toPgVectorLiteral(float[] vector) {

@@ -7,7 +7,7 @@ import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { CitationChips } from "@/components/chat/citation-chips";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import { isPdfSource, type ChatMessage, type Repository } from "@/lib/api";
+import { effectiveSourceType, type ChatMessage, type Repository, type SourceType } from "@/lib/api";
 
 const LOADING_MESSAGES = [
   "QUERYING VECTOR SPACE...",
@@ -17,17 +17,48 @@ const LOADING_MESSAGES = [
   "STREAMING TELEMETRY...",
 ];
 
-const REPO_STARTER_PROMPTS = [
-  "Map the system architecture and core module boundaries.",
-  "Locate the entry point and trace the startup sequence.",
-  "Trace the primary request lifecycle end to end.",
-];
-
-const PDF_STARTER_PROMPTS = [
-  "Summarize the core thesis and key takeaways with page citations.",
-  "List the major sections, findings, or recommendations in this document.",
-  "Identify critical metrics, dates, or definitions referenced in the text.",
-];
+const STARTER_PROMPTS_BY_TYPE: Record<SourceType, { subtext: string; prompts: string[] }> = {
+  GITHUB_REPO: {
+    subtext: "Query architecture, execution paths, or symbols. Responses are grounded directly in retrieved source lines.",
+    prompts: [
+      "Map the system architecture and core module boundaries.",
+      "Locate the entry point and trace the startup sequence.",
+      "Trace the primary request lifecycle end to end.",
+    ],
+  },
+  PDF: {
+    subtext: "Query sections, arguments, or specific details. Responses are grounded directly in retrieved document pages.",
+    prompts: [
+      "Summarize the core thesis and key takeaways with page citations.",
+      "List the major sections, findings, or recommendations in this document.",
+      "Identify critical metrics, dates, or definitions referenced in the text.",
+    ],
+  },
+  NOTEBOOK: {
+    subtext: "Query data transformations, model training steps, or experiment logic. Responses cite paired markdown and code cells.",
+    prompts: [
+      "Walk through the end-to-end data pipeline and transformations.",
+      "Explain the model configuration, hyperparameters, and evaluation metrics.",
+      "Identify potential data leakage, assumptions, or edge cases in the code cells.",
+    ],
+  },
+  IAC: {
+    subtext: "Inspect Terraform resources, Docker build stages, or CI/CD jobs. Responses cite exact block signatures and line numbers.",
+    prompts: [
+      "Summarize all provisioned resources, services, or CI stages and how they connect.",
+      "Audit security configurations, exposed ports, IAM permissions, or secret handling.",
+      "Identify build bottlenecks, missing healthchecks, or reliability gaps.",
+    ],
+  },
+  EPUB: {
+    subtext: "Navigate architecture books and technical specifications chapter by chapter with exact section citations.",
+    prompts: [
+      "Summarize the core architectural concepts and trade-offs across chapters.",
+      "Compare the key algorithms, storage designs, or patterns discussed in this book.",
+      "Pull out concrete engineering guidelines and failure modes cited in the text.",
+    ],
+  },
+};
 
 const MessageRow = memo(function MessageRow({
   message,
@@ -148,8 +179,7 @@ export function ChatMessages({
     <ScrollArea className="min-h-0 flex-1 overflow-hidden">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 sm:gap-7 sm:px-5 sm:py-8">
         {messages.length === 0 && !streamText && (() => {
-          const isPdf = isPdfSource(repo);
-          const starterPrompts = isPdf ? PDF_STARTER_PROMPTS : REPO_STARTER_PROMPTS;
+          const sourceConfig = STARTER_PROMPTS_BY_TYPE[effectiveSourceType(repo)];
           return (
             <div className="space-y-5 border border-border bg-card/60 p-5 sm:p-7">
               <div className="space-y-1.5">
@@ -160,14 +190,12 @@ export function ChatMessages({
                   Ready for Interrogation
                 </p>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  {isPdf
-                    ? "Query sections, arguments, or specific details. Responses are grounded directly in retrieved document pages."
-                    : "Query architecture, execution paths, or symbols. Responses are grounded directly in retrieved source lines."}
+                  {sourceConfig.subtext}
                 </p>
               </div>
               {onSelectPrompt && (
                 <div className="divide-y divide-border/70 border border-border/80">
-                  {starterPrompts.map((prompt) => (
+                  {sourceConfig.prompts.map((prompt) => (
                     <button
                       key={prompt}
                       type="button"

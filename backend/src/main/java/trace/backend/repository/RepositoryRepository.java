@@ -13,7 +13,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import trace.backend.dto.IndexStatusResponse;
 import trace.backend.dto.RepositoryResponse;
+import trace.backend.entity.IndexStatus;
 import trace.backend.entity.Repository;
+import trace.backend.entity.SourceType;
 
 public interface RepositoryRepository extends JpaRepository<Repository, UUID> {
     List<Repository> findByUserIdOrderByFullNameAsc(UUID userId);
@@ -23,6 +25,9 @@ public interface RepositoryRepository extends JpaRepository<Repository, UUID> {
     Optional<Repository> findByUserIdAndGithubRepoId(UUID userId, Long githubRepoId);
 
     Optional<Repository> findFirstByUserIdAndOwnerIgnoreCaseAndNameIgnoreCase(UUID userId, String owner, String name);
+
+    Optional<Repository> findFirstByUserIdAndTreeShaAndSourceTypeAndIndexStatus(
+            UUID userId, String treeSha, SourceType sourceType, IndexStatus indexStatus);
 
     @Query("""
             SELECT new trace.backend.dto.RepositoryResponse(

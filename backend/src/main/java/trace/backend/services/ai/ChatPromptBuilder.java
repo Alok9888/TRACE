@@ -10,7 +10,7 @@ import trace.backend.entity.SourceType;
 
 /**
  * Builds question-aware and source-aware prompts so response length, structure, and citation format
- * match both query complexity and active source type (GitHub repository vs. PDF document).
+ * match both query complexity and active source type (GitHub Repo, PDF, EPUB, Jupyter Notebook, IaC).
  */
 @Component
 public class ChatPromptBuilder {
@@ -31,7 +31,8 @@ public class ChatPromptBuilder {
             "\\b(architecture|end[- ]to[- ]end|walkthrough|step[- ]by[- ]step|in detail|detailed|deep dive|"
                     + "refactor|compare|comparison|all files|every file|entire codebase|full flow|lifecycle|"
                     + "bottleneck|bottlenecks|audit|design|explain how .* works|trace the|optimize|"
-                    + "summarize the entire|comprehensive summary|all sections|key findings|methodology)\\b",
+                    + "summarize the entire|comprehensive summary|all sections|key findings|methodology|"
+                    + "pipeline|deployment flow|security audit|all resources|all stages)\\b",
             Pattern.CASE_INSENSITIVE);
 
     private static final Pattern STANDARD_SIGNAL_PATTERN = Pattern.compile(
@@ -82,9 +83,25 @@ public class ChatPromptBuilder {
 
     public String systemPrompt(String sourceName, SourceType sourceType, QueryTier tier, String customSystemPrompt) {
         SourceType effectiveType = sourceType != null ? sourceType : SourceType.GITHUB_REPO;
-        String basePrompt = effectiveType == SourceType.PDF
-                ? buildPdfBasePrompt(sourceName, tier)
-                : buildRepoBasePrompt(sourceName, tier);
+        String basePrompt = switch (effectiveType) {
+            case PDF -> buildDocumentBasePrompt(
+                    "document analyst for the PDF \"%s\"".formatted(sourceName),
+                    "exact page numbers (e.g., Page 4) and section headings",
+                    tier);
+            case EPUB -> buildDocumentBasePrompt(
+                    "technical book analyst for the EPUB \"%s\"".formatted(sourceName),
+                    "exact chapter numbers (e.g., Chapter 3) and section headings",
+                    tier);
+            case NOTEBOOK -> buildDocumentBasePrompt(
+                    "technical analyst for the Jupyter Notebook \"%s\"".formatted(sourceName),
+                    "exact cell numbers (e.g., Cell 7) and section headings",
+                    tier);
+            case IAC -> buildDocumentBasePrompt(
+                    "infrastructure & DevOps analyst for the configuration \"%s\"".formatted(sourceName),
+                    "exact block signatures and line numbers (e.g., Block: resource \"aws_ecs_service\" \"worker\" (Line 42))",
+                    tier);
+            default -> buildRepoBasePrompt(sourceName, tier);
+        };
 
         boolean isDefault = ChatGenerationConfig.isDefaultPromptString(customSystemPrompt);
         String trimmedDirective = customSystemPrompt == null || customSystemPrompt.isBlank()
@@ -99,24 +116,30 @@ public class ChatPromptBuilder {
         }
 
         if (isDefault) {
-            if (effectiveType == SourceType.PDF) {
-                return basePrompt
-                        + "\nGROUNDING RULE: Answer strictly from the indexed document content."
+            return basePrompt + switch (effectiveType) {
+                case PDF -> "\nGROUNDING RULE: Answer strictly from the indexed document content."
                         + " If the retrieved passages do not contain the answer, state clearly that it is not present in the indexed PDF rather than guessing.\n";
-            }
-            return basePrompt
-                    + "\nGROUNDING RULE: Answer strictly from the indexed source content."
-                    + " If the retrieved code context does not contain the answer, state clearly that it is not present in the indexed repository rather than guessing.\n";
+                case EPUB -> "\nGROUNDING RULE: Answer strictly from the indexed book chapters."
+                        + " If the retrieved chapters do not contain the answer, state clearly that it is not present in the indexed EPUB rather than guessing.\n";
+                case NOTEBOOK -> "\nGROUNDING RULE: Answer strictly from the indexed notebook cells."
+                        + " If the retrieved cells do not contain the answer, state clearly that it is not present in the indexed notebook rather than guessing.\n";
+                case IAC -> "\nGROUNDING RULE: Answer strictly from the indexed infrastructure configuration."
+                        + " If the retrieved blocks do not contain the answer, state clearly that it is not present in the indexed config rather than guessing.\n";
+                default -> "\nGROUNDING RULE: Answer strictly from the indexed source content."
+                        + " If the retrieved code context does not contain the answer, state clearly that it is not present in the indexed repository rather than guessing.\n";
+            };
         }
 
-        if (effectiveType == SourceType.PDF) {
-            return basePrompt
-                    + "\nUSER INSTRUCTION (prioritize this tone, framing, and focus): " + trimmedDirective
-                    + "\nGround claims in the provided document passages when available, and cite page numbers (e.g., Page 4) and section headings.\n";
-        }
+        String citationReminder = switch (effectiveType) {
+            case PDF -> "cite page numbers (e.g., Page 4) and section headings";
+            case EPUB -> "cite chapter numbers (e.g., Chapter 3) and section headings";
+            case NOTEBOOK -> "cite cell numbers (e.g., Cell 5) and section headings";
+            case IAC -> "cite block names and line numbers (e.g., Block: ... (Line 12))";
+            default -> "cite file paths and line ranges";
+        };
         return basePrompt
                 + "\nUSER INSTRUCTION (prioritize this tone, framing, and focus): " + trimmedDirective
-                + "\nGround claims in the provided code context when available, and cite file paths and line ranges.\n";
+                + "\nGround claims in the provided indexed context when available, and " + citationReminder + ".\n";
     }
 
     private static String buildRepoBasePrompt(String repositoryFullName, QueryTier tier) {
@@ -145,29 +168,29 @@ public class ChatPromptBuilder {
         };
     }
 
-    private static String buildPdfBasePrompt(String documentName, QueryTier tier) {
+    private static String buildDocumentBasePrompt(String roleDescription, String citationRule, QueryTier tier) {
         return switch (tier) {
             case TRIVIAL -> """
-                    You are TRACE, a concise document analyst for the PDF "%s".
-                    Reply in 1 brief sentence. Do not invent document facts.
-                    """.formatted(documentName);
+                    You are TRACE, a concise %s.
+                    Reply in 1 brief sentence. Do not invent details.
+                    """.formatted(roleDescription);
             case SIMPLE -> """
-                    You are TRACE, a concise document analyst for the PDF "%s".
+                    You are TRACE, a concise %s.
                     RESPONSE STYLE: Answer directly in 1 to 3 short sentences of plain prose.
                     Do NOT use markdown headings, multi-section templates, or bullet lists unless explicitly requested.
-                    Cite exact page numbers (e.g., Page 3) and section headings inline when referencing facts.
-                    """.formatted(documentName);
+                    Cite %s inline when referencing facts.
+                    """.formatted(roleDescription, citationRule);
             case STANDARD -> """
-                    You are TRACE, a concise document analyst for the PDF "%s".
+                    You are TRACE, a concise %s.
                     RESPONSE STYLE: Match length to the question—use a short paragraph or 3 to 5 tight bullets.
                     Avoid filler introductions, redundant summaries, and unnecessary headings.
-                    Cite exact page numbers (e.g., Page 4) and section headings inline for every key claim.
-                    """.formatted(documentName);
+                    Cite %s inline for every key claim.
+                    """.formatted(roleDescription, citationRule);
             case DEEP -> """
-                    You are TRACE, an expert document analyst for the PDF "%s".
-                    RESPONSE STYLE: Provide a clear, structured breakdown with concise headings or numbered points.
-                    Cite exact page numbers (e.g., Page 7) and section headings throughout. Keep every point concrete and free of filler.
-                    """.formatted(documentName);
+                    You are TRACE, an expert %s.
+                    RESPONSE STYLE: Provide a clear, structured technical breakdown with concise headings or numbered points.
+                    Cite %s throughout. Keep every point concrete and free of filler.
+                    """.formatted(roleDescription, citationRule);
         };
     }
 
@@ -176,7 +199,14 @@ public class ChatPromptBuilder {
     }
 
     public String userPrompt(String context, String question, SourceType sourceType) {
-        String label = sourceType == SourceType.PDF ? "Document context:" : "Code context:";
+        SourceType effectiveType = sourceType != null ? sourceType : SourceType.GITHUB_REPO;
+        String label = switch (effectiveType) {
+            case PDF -> "Document context:";
+            case EPUB -> "Book context:";
+            case NOTEBOOK -> "Notebook context:";
+            case IAC -> "Infrastructure config context:";
+            default -> "Code context:";
+        };
         return """
                 %s
                 %s
