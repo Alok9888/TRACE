@@ -412,7 +412,7 @@ export default function HomePage() {
               src="/images/spacex-launch-arc.jpg"
               alt=""
               aria-hidden="true"
-              className="h-full w-full scale-[1.03] object-cover object-[72%_35%] opacity-[0.22] contrast-125 will-change-transform sm:object-right-bottom dark:opacity-[0.32] [mask-image:radial-gradient(ellipse_80%_75%_at_75%_55%,black_25%,transparent_100%)]"
+              className="h-full w-full scale-[1.03] object-cover object-[72%_35%] opacity-[0.22] will-change-transform sm:object-right-bottom dark:opacity-[0.32] [mask-image:radial-gradient(ellipse_80%_75%_at_75%_55%,black_25%,transparent_100%)]"
             />
             <div className="mission-grid absolute inset-0 opacity-55" />
             <div className="hero-spotlight absolute inset-0 transition-opacity duration-500" />
@@ -560,7 +560,7 @@ export default function HomePage() {
               src="/images/falcon-ascent.jpg"
               alt=""
               aria-hidden="true"
-              className="h-full w-full scale-105 object-cover object-center opacity-[0.16] contrast-125 will-change-transform dark:opacity-[0.28] [mask-image:radial-gradient(ellipse_75%_75%_at_55%_50%,black_25%,transparent_100%)]"
+              className="h-full w-full scale-105 object-cover object-center opacity-[0.16] will-change-transform dark:opacity-[0.28] [mask-image:radial-gradient(ellipse_75%_75%_at_55%_50%,black_25%,transparent_100%)]"
             />
             <div className="mission-grid absolute inset-0 opacity-40" />
           </div>
@@ -651,7 +651,7 @@ export default function HomePage() {
               src="/images/orbital-instrument.jpg"
               alt=""
               aria-hidden="true"
-              className="h-full w-full scale-105 object-cover object-[70%_30%] opacity-[0.12] contrast-125 will-change-transform dark:opacity-[0.17] [mask-image:radial-gradient(ellipse_75%_75%_at_75%_45%,black_15%,transparent_100%)]"
+              className="h-full w-full scale-105 object-cover object-[70%_30%] opacity-[0.12] will-change-transform dark:opacity-[0.17] [mask-image:radial-gradient(ellipse_75%_75%_at_75%_45%,black_15%,transparent_100%)]"
             />
             <div className="mission-grid absolute inset-0 opacity-35" />
           </div>
@@ -754,7 +754,7 @@ export default function HomePage() {
               src="/images/earth-dark.jpg"
               alt=""
               aria-hidden="true"
-              className="h-full w-full scale-105 object-cover object-center opacity-[0.14] contrast-125 will-change-transform dark:opacity-[0.22] [mask-image:radial-gradient(ellipse_68%_65%_at_50%_55%,black_20%,transparent_100%)]"
+              className="h-full w-full scale-105 object-cover object-center opacity-[0.14] will-change-transform dark:opacity-[0.22] [mask-image:radial-gradient(ellipse_68%_65%_at_50%_55%,black_20%,transparent_100%)]"
             />
             <svg
               aria-hidden="true"

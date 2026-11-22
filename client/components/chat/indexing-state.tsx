@@ -187,7 +187,7 @@ export function IndexingState({
         src="/images/orbital-horizon.jpg"
         alt=""
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 h-full w-full object-cover object-center opacity-[0.12] contrast-125 select-none dark:opacity-[0.18] [mask-image:radial-gradient(ellipse_70%_70%_at_50%_50%,black_20%,transparent_100%)]"
+        className="pointer-events-none absolute inset-0 h-full w-full object-cover object-center opacity-[0.12] select-none dark:opacity-[0.18] [mask-image:radial-gradient(ellipse_70%_70%_at_50%_50%,black_20%,transparent_100%)]"
       />
       <div className="mission-grid pointer-events-none absolute inset-0 opacity-50" />
 
