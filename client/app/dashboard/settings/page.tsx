@@ -7,7 +7,7 @@ export default function SettingsPage() {
   return (
     <AppShell
       title="Settings"
-      description="Appearance and repository access"
+      description="Appearance, workspace ID, and source access"
     >
       <SettingsDashboard />
     </AppShell>

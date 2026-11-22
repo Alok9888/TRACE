@@ -78,9 +78,10 @@ public class CodeChunker {
                 }
             }
 
-            Map<String, Object> metadata = new HashMap<>(8);
+            Map<String, Object> metadata = new HashMap<>(10);
             metadata.put(RagSettings.METADATA_REPO_ID, sanitizedRepoId);
             metadata.put(RagSettings.METADATA_USER_ID, userIdStr);
+            metadata.put(RagSettings.METADATA_SOURCE_TYPE, "GITHUB_REPO");
             metadata.put("filePath", sanitizedFilePath);
             metadata.put("language", language);
             metadata.put("chunkIndex", i);

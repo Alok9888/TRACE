@@ -122,19 +122,19 @@ export function useRefreshRepos() {
     mutationFn: () =>
       toast.promise(api.listRepos(true), {
         loading: {
-          title: "Syncing repositories",
-          description: "Fetching the latest repos from GitHub…",
+          title: "Syncing sources",
+          description: "Fetching latest workspace sources…",
           type: "loading",
         },
         success: (repos) => ({
           title: "Sync successful",
-          description: `${repos.length} repositories loaded`,
+          description: `${repos.length} sources loaded`,
           type: "success",
         }),
         error: (error: Error) => ({
           title: "Sync failed",
           description:
-            error instanceof Error ? error.message : "Could not sync repositories",
+            error instanceof Error ? error.message : "Could not sync sources",
           type: "error",
         }),
       }),

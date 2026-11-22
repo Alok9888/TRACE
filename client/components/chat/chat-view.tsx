@@ -25,12 +25,13 @@ import {
 } from "@/lib/chat-config";
 
 export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: string }) {
-  const [resolvedRepoId, setResolvedRepoId] = useState<string | null>(null);
-
   const routeRepoId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(repoId)
     ? repoId
     : null;
-  const effectiveRepoId = resolvedRepoId ?? routeRepoId ?? "";
+
+  // Use URL-based status polling when we have initialUrl but no route UUID yet
+  const urlStatusQuery = useIndexStatusByUrl(initialUrl ?? "", Boolean(initialUrl && !routeRepoId));
+  const effectiveRepoId = routeRepoId ?? urlStatusQuery.data?.repositoryId ?? "";
   const shouldFetchRepo = Boolean(effectiveRepoId);
 
   // Single-poller strategy: useRepository fetches repo details once (no duplicate 500ms poll),
@@ -40,19 +41,12 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
     pollWhileIndexing: false,
   });
 
-  // Use URL-based status polling when we have initialUrl but no repo ID yet
-  const urlStatusQuery = useIndexStatusByUrl(initialUrl ?? "", Boolean(initialUrl && !effectiveRepoId));
   // Only poll /status when repo isn't already known to be READY (avoids wasted DB call on ready repos)
   const shouldPollStatus = Boolean(effectiveRepoId) && repoQuery.data?.indexStatus !== "READY";
   const repoStatusQuery = useIndexStatus(effectiveRepoId, shouldPollStatus);
 
   // Preserve last known status across the handoff from URL polling to repoId polling so UI never flashes back to "creating"
   const latestStatus = repoStatusQuery.data ?? urlStatusQuery.data;
-  useEffect(() => {
-    if (urlStatusQuery.data?.repositoryId) {
-      setResolvedRepoId(urlStatusQuery.data.repositoryId);
-    }
-  }, [urlStatusQuery.data?.repositoryId]);
 
   const statusIndex = latestStatus?.indexStatus;
   const repositoryIndex = repoQuery.data?.indexStatus;
@@ -100,16 +94,17 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
   );
 
   // Track when streaming started for the 10s warning
-  const [showLongWaitWarning, setShowLongWaitWarning] = useState(false);
+  const [longWaitElapsed, setLongWaitElapsed] = useState(false);
+  const showLongWaitWarning = Boolean(streaming && longWaitElapsed);
 
   useEffect(() => {
-    if (streaming) {
-      const timer = setTimeout(() => {
-        setShowLongWaitWarning(true);
-      }, 10000);
-      return () => clearTimeout(timer);
-    }
-    setShowLongWaitWarning(false);
+    if (!streaming) return;
+    const resetTimer = window.setTimeout(() => setLongWaitElapsed(false), 0);
+    const warnTimer = window.setTimeout(() => setLongWaitElapsed(true), 10000);
+    return () => {
+      window.clearTimeout(resetTimer);
+      window.clearTimeout(warnTimer);
+    };
   }, [streaming]);
 
   useEffect(() => {
@@ -171,7 +166,7 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
   const chunksProcessed = urlStatus?.chunksProcessed ?? 0;
   const currentStage: 'creating' | 'fetching' | 'chunking' | 'embedding' | 'saving' | 'done' | null =
     urlStatus?.indexingStage ?? (repo?.indexStatus === 'INDEXING' ? 'fetching' : 'creating');
-  const indexingDetail = urlStatus?.indexingDetail ?? 'Creating repo row...';
+  const indexingDetail = urlStatus?.indexingDetail ?? 'Initializing source...';
 
   // CRITICAL: Keep showing indexing overlay whenever we don't have `repo` yet (and haven't errored)
   // while `initialUrl` or live status exists — prevents flashing/sticking on "Loading chat..."
@@ -195,7 +190,7 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
       githubRepoId: 0,
       owner: '',
       name: '',
-      fullName: 'Repository',
+      fullName: 'Source',
       isPrivate: false,
       defaultBranch: 'main',
       language: null,
@@ -209,7 +204,7 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
       errorMessage: tempStatus.errorMessage,
     };
     return (
-      <AppShell title="Indexing repository…" description={indexingDetail ?? 'Starting indexing...'}>
+      <AppShell title="Indexing source…" description={indexingDetail ?? 'Starting indexing...'}>
         <IndexingState repo={tempRepo} status={tempStatus} />
       </AppShell>
     );
@@ -218,12 +213,12 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
   // Show error only if we have a real repo query error
   if (repoQuery.isError) {
     return (
-      <AppShell title="Repository unavailable">
+      <AppShell title="Source unavailable">
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8">
           <p className="text-sm text-muted-foreground">
-            {(repoQuery.error as Error)?.message ?? "Repository not found"}
+            {(repoQuery.error as Error)?.message ?? "Source not found"}
           </p>
-          <Button render={<Link href="/dashboard" />}>Back to dashboard</Button>
+          <Button render={<Link href="/dashboard" />}>Back to Console</Button>
         </div>
       </AppShell>
     );
@@ -248,7 +243,7 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
         ready
           ? repo.chunkCount > 0
             ? `COMMS ONLINE // ${repo.chunkCount.toLocaleString()} VECTORS INDEXED`
-            : "COMMS ONLINE // GROUNDED IN REPOSITORY"
+            : "COMMS ONLINE // GROUNDED IN INDEXED CONTEXT"
           : "INGESTION SEQUENCE IN PROGRESS"
       }
       actions={
@@ -286,6 +281,7 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
               <ChatComposer
                 disabled={!sessionId}
                 streaming={streaming}
+                sourceType={repo.sourceType}
                 onSend={send}
                 onStop={stop}
               />

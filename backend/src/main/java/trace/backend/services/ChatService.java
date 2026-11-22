@@ -51,7 +51,7 @@ public class ChatService {
     public ChatSessionResponse createSession(UUID userId, CreateChatSessionRequest request) {
         Repository repo = repoService.requireOwned(request.repositoryId(), userId);
         if (repo.getIndexStatus() != IndexStatus.READY) {
-            throw new BadRequestException("Repository must be indexed before chatting");
+            throw new BadRequestException("Source must be indexed before chatting");
         }
 
         String title = request.title() != null && !request.title().isBlank()
@@ -118,10 +118,10 @@ public class ChatService {
                 .orElseThrow(() -> new NotFoundException("Chat session not found"));
 
         if (summary.indexStatus() != IndexStatus.READY) {
-            throw new BadRequestException("Repository is not ready for chat");
+            throw new BadRequestException("Source is not ready for chat");
         }
-        log.info("{} [CHAT] session+repo ready sessionId={} repositoryId={}",
-                Instant.now(), sessionId, summary.repositoryId());
+        log.info("{} [CHAT] session+repo ready sessionId={} repositoryId={} sourceType={}",
+                Instant.now(), sessionId, summary.repositoryId(), summary.sourceType());
 
         String repoVersion = summary.treeSha() != null && !summary.treeSha().isBlank()
                 ? summary.treeSha()
@@ -132,7 +132,8 @@ public class ChatService {
                 summary.sessionId(),
                 summary.repositoryId(),
                 summary.repositoryFullName(),
-                repoVersion);
+                repoVersion,
+                summary.sourceType());
         chatContextCache.put(userId, sessionId, context);
         return context;
     }

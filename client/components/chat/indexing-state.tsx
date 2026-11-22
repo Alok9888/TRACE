@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, Loader2, RotateCcw, CheckCircle } from "lucide-react";
+import { AlertCircle, ArrowLeft, CheckCircle, Loader2, RotateCcw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -12,8 +13,8 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Progress } from "@/components/ui/progress";
-import { getRepoProgress, useStartIndexing } from "@/hooks/use-repos";
-import type { IndexStatusResponse, Repository } from "@/lib/api";
+import { useStartIndexing } from "@/hooks/use-repos";
+import { isPdfSource, type IndexStatusResponse, type Repository } from "@/lib/api";
 
 const STAGES = [
   { key: "creating", num: "01", label: "INIT" },
@@ -24,19 +25,19 @@ const STAGES = [
   { key: "done", num: "06", label: "ONLINE" },
 ] as const;
 
-const SUBTEXTS: Record<string, string[]> = {
+const REPO_SUBTEXTS: Record<string, string[]> = {
   creating: [
-    "Initializing repository telemetry...",
-    "Resolving GitHub metadata...",
+    "Initializing source telemetry...",
+    "Resolving metadata...",
     "Validating source tree...",
   ],
   fetching: [
-    "Streaming repository archive...",
-    "Filtering eligible source files...",
-    "Ingesting codebase payloads...",
+    "Streaming source archive...",
+    "Filtering eligible files...",
+    "Ingesting source payloads...",
   ],
   chunking: [
-    "Segmenting files on line boundaries...",
+    "Segmenting content on line boundaries...",
     "Mapping line coordinates...",
     "Preparing 64-chunk embedding batches...",
   ],
@@ -47,11 +48,44 @@ const SUBTEXTS: Record<string, string[]> = {
   ],
   saving: [
     "Committing vector index...",
-    "Finalizing repository telemetry...",
+    "Finalizing source telemetry...",
     "Verifying readiness...",
   ],
   done: [
-    "Repository online.",
+    "Source online.",
+    "Comms channel unlocked.",
+    "Telemetry nominal.",
+  ],
+};
+
+const PDF_SUBTEXTS: Record<string, string[]> = {
+  creating: [
+    "Initializing document telemetry...",
+    "Validating PDF payload...",
+    "Preparing page extractor...",
+  ],
+  fetching: [
+    "Extracting PDF pages...",
+    "Normalizing text and layout...",
+    "Stripping running headers and footers...",
+  ],
+  chunking: [
+    "Segmenting document on paragraph boundaries...",
+    "Mapping page and section coordinates...",
+    "Preparing 64-chunk embedding batches...",
+  ],
+  embedding: [
+    "Computing 384-dim vector embeddings...",
+    "Dispatching batched inference...",
+    "Writing vectors to pgvector...",
+  ],
+  saving: [
+    "Committing vector index...",
+    "Finalizing document telemetry...",
+    "Verifying readiness...",
+  ],
+  done: [
+    "Document online.",
     "Comms channel unlocked.",
     "Telemetry nominal.",
   ],
@@ -65,6 +99,7 @@ export function IndexingState({
   status?: IndexStatusResponse;
 }) {
   const indexMutation = useStartIndexing();
+  const isPdf = isPdfSource(repo);
   const filesProcessed = status?.filesProcessed ?? repo.filesProcessed;
   const filesTotal = status?.filesTotal ?? repo.filesTotal;
   const chunksTotal = status?.chunksTotal ?? repo.chunkCount;
@@ -77,27 +112,26 @@ export function IndexingState({
   // Current stage index for progress display
   const currentStageIndex = STAGES.findIndex((s) => s.key === indexingStage);
   const completedStages = currentStageIndex >= 0 ? currentStageIndex : 0;
-  const stageProgress = STAGES.length > 0 ? ((completedStages + 1) / STAGES.length) * 100 : 0;
 
   // Subtext rotation state
   const [subtext, setSubtext] = useState("");
   const subtextIndexRef = useRef(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Rotate subtext every 500ms
   useEffect(() => {
     if (indexStatus === "READY" || indexStatus === "FAILED") return;
 
     const stageKey = indexingStage ?? "fetching";
-    const details = SUBTEXTS[stageKey] ?? SUBTEXTS.fetching;
+    const subtextMap = isPdf ? PDF_SUBTEXTS : REPO_SUBTEXTS;
+    const details = subtextMap[stageKey] ?? subtextMap.fetching;
 
-    // Include detail from backend if available
     const allDetails = indexingDetail
-      ? [indexingDetail, ...details.filter(d => d !== indexingDetail)]
+      ? [indexingDetail, ...details.filter((d) => d !== indexingDetail)]
       : details;
 
-    // Initial subtext
-    setSubtext(allDetails[0]);
+    const startTimer = window.setTimeout(() => {
+      setSubtext(allDetails[0]);
+    }, 0);
     subtextIndexRef.current = 0;
 
     intervalRef.current = setInterval(() => {
@@ -106,9 +140,10 @@ export function IndexingState({
     }, 2500);
 
     return () => {
+      window.clearTimeout(startTimer);
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [indexingStage, indexingDetail, indexStatus]);
+  }, [indexingStage, indexingDetail, indexStatus, isPdf]);
 
   if (indexStatus === "FAILED") {
     return (
@@ -120,17 +155,24 @@ export function IndexingState({
           <EmptyTitle className="font-heading text-sm font-semibold tracking-[0.16em] uppercase">
             Indexing Fault
           </EmptyTitle>
-          <EmptyDescription className="font-mono text-xs text-muted-foreground">
+          <EmptyDescription className="max-w-md font-mono text-xs text-muted-foreground">
             {errorMessage || "Indexing sequence aborted unexpectedly."}
           </EmptyDescription>
         </EmptyHeader>
-        <Button
-          onClick={() => indexMutation.mutate(repo.id)}
-          disabled={indexMutation.isPending}
-        >
-          <RotateCcw data-icon="inline-start" />
-          Retry Sequence
-        </Button>
+        {isPdf ? (
+          <Button variant="outline" render={<Link href="/dashboard" />}>
+            <ArrowLeft data-icon="inline-start" />
+            Back to Console
+          </Button>
+        ) : (
+          <Button
+            onClick={() => indexMutation.mutate(repo.id)}
+            disabled={indexMutation.isPending}
+          >
+            <RotateCcw data-icon="inline-start" />
+            Retry Sequence
+          </Button>
+        )}
       </Empty>
     );
   }
@@ -153,7 +195,6 @@ export function IndexingState({
     );
   }
 
-  // Calculate progress based on current stage
   let progress = 0;
   switch (indexingStage) {
     case "creating":
@@ -179,10 +220,10 @@ export function IndexingState({
   }
 
   const clampedProgress = Math.min(100, Math.max(progress, 5));
+  const unitLabel = isPdf ? "PAGES" : "FILES";
 
   return (
     <div className="relative flex flex-1 flex-col items-center justify-center overflow-hidden p-4 sm:p-6">
-      {/* Subtle SpaceX orbital trajectory photograph backdrop */}
       <img
         src="/images/orbital-horizon.jpg"
         alt=""
@@ -244,13 +285,13 @@ export function IndexingState({
         <div className="space-y-3">
           <Progress value={clampedProgress} className="h-[2px] rounded-none" />
           <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-[11px]">
-            <span className="text-foreground/85">{subtext}</span>
-            {filesTotal > 0 && (
+            <span className="text-foreground/85">{subtext || indexingDetail}</span>
+            {(filesTotal > 0 || chunksTotal > 0) && (
               <span className="tabular-telemetry tracking-[0.1em] text-muted-foreground uppercase">
-                {indexingStage === "fetching" && `FILES ${filesProcessed}/${filesTotal}`}
-                {indexingStage === "chunking" && `CHUNKS ${chunksProcessed}/${chunksTotal}`}
-                {indexingStage === "embedding" && `VECTORS ${chunksProcessed}/${chunksTotal}`}
-                {indexingStage === "saving" && `COMMIT ${chunksTotal} VECTORS`}
+                {indexingStage === "fetching" && filesTotal > 0 && `${unitLabel} ${filesProcessed}/${filesTotal}`}
+                {indexingStage === "chunking" && chunksTotal > 0 && `CHUNKS ${chunksProcessed}/${chunksTotal}`}
+                {indexingStage === "embedding" && chunksTotal > 0 && `VECTORS ${chunksProcessed}/${chunksTotal}`}
+                {indexingStage === "saving" && chunksTotal > 0 && `COMMIT ${chunksTotal} VECTORS`}
               </span>
             )}
           </div>

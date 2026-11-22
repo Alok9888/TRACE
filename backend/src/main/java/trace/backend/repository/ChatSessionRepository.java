@@ -11,6 +11,7 @@ import org.springframework.data.repository.query.Param;
 
 import trace.backend.entity.ChatSession;
 import trace.backend.entity.IndexStatus;
+import trace.backend.entity.SourceType;
 
 public interface ChatSessionRepository extends JpaRepository<ChatSession, UUID> {
     List<ChatSession> findByUserIdAndRepositoryIdOrderByCreatedAtDesc(UUID userId, UUID repositoryId);
@@ -23,11 +24,13 @@ public interface ChatSessionRepository extends JpaRepository<ChatSession, UUID> 
             String repositoryFullName,
             IndexStatus indexStatus,
             String treeSha,
-            Instant indexedAt) {}
+            Instant indexedAt,
+            SourceType sourceType) {}
 
     @Query("""
             SELECT new trace.backend.repository.ChatSessionRepository$SessionRepoSummary(
-                s.id, r.id, r.fullName, r.indexStatus, r.treeSha, r.indexedAt
+                s.id, r.id, r.fullName, r.indexStatus, r.treeSha, r.indexedAt,
+                COALESCE(r.sourceType, trace.backend.entity.SourceType.GITHUB_REPO)
             )
             FROM ChatSession s, Repository r
             WHERE s.id = :sessionId

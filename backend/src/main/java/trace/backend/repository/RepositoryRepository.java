@@ -28,11 +28,13 @@ public interface RepositoryRepository extends JpaRepository<Repository, UUID> {
             SELECT new trace.backend.dto.RepositoryResponse(
                 r.id, r.githubRepoId, r.owner, r.name, r.fullName, r.isPrivate,
                 r.defaultBranch, r.language, r.htmlUrl, r.description,
-                r.indexStatus, r.indexedAt, r.chunkCount, r.filesTotal, r.filesProcessed, r.errorMessage
+                r.indexStatus, r.indexedAt, r.chunkCount, r.filesTotal, r.filesProcessed, r.errorMessage,
+                COALESCE(r.sourceType, trace.backend.entity.SourceType.GITHUB_REPO),
+                r.fileName, r.fileSizeBytes, r.pageCount
             )
             FROM Repository r
             WHERE r.userId = :userId
-            ORDER BY r.fullName ASC
+            ORDER BY r.updatedAt DESC
             """)
     List<RepositoryResponse> findResponsesByUserIdOrderByFullNameAsc(@Param("userId") UUID userId);
 
@@ -40,7 +42,9 @@ public interface RepositoryRepository extends JpaRepository<Repository, UUID> {
             SELECT new trace.backend.dto.RepositoryResponse(
                 r.id, r.githubRepoId, r.owner, r.name, r.fullName, r.isPrivate,
                 r.defaultBranch, r.language, r.htmlUrl, r.description,
-                r.indexStatus, r.indexedAt, r.chunkCount, r.filesTotal, r.filesProcessed, r.errorMessage
+                r.indexStatus, r.indexedAt, r.chunkCount, r.filesTotal, r.filesProcessed, r.errorMessage,
+                COALESCE(r.sourceType, trace.backend.entity.SourceType.GITHUB_REPO),
+                r.fileName, r.fileSizeBytes, r.pageCount
             )
             FROM Repository r
             WHERE r.id = :id AND r.userId = :userId

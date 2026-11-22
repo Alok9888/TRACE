@@ -98,7 +98,11 @@ public class RepoService {
                 repo.getChunkCount(),
                 repo.getFilesTotal(),
                 repo.getFilesProcessed(),
-                repo.getErrorMessage());
+                repo.getErrorMessage(),
+                repo.effectiveSourceType(),
+                repo.getFileName(),
+                repo.getFileSizeBytes(),
+                repo.getPageCount());
     }
 
     private static Long toLong(Object value) {

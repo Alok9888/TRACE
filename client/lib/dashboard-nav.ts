@@ -1,5 +1,5 @@
 import {
-  FolderGit2,
+  Layers,
   LayoutGrid,
   Settings,
   type LucideIcon,
@@ -27,9 +27,9 @@ export const dashboardNavGroups: DashboardNavGroup[] = [
         icon: LayoutGrid,
       },
       {
-        title: "Repositories",
+        title: "Sources",
         href: "/dashboard",
-        icon: FolderGit2,
+        icon: Layers,
         exact: true,
       },
     ],

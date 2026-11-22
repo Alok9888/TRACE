@@ -307,13 +307,17 @@ public class ChatStreamHandler {
                     now(), queryTier, sessionId, codeContextRetriever.embeddingDimensions(),
                     retrievedContext.citations().size(), sessionMs, ragMs, System.currentTimeMillis() - requestStartMs);
 
+            trace.backend.entity.SourceType sourceType = streamContext.effectiveSourceType();
             String systemPrompt = chatPromptBuilder.systemPrompt(
-                    streamContext.repositoryName(), queryTier, config.systemPrompt());
+                    streamContext.repositoryName(), sourceType, queryTier, config.systemPrompt());
+            String emptyMatchText = sourceType == trace.backend.entity.SourceType.PDF
+                    ? "No relevant document passages matched the current similarity threshold.\n\nUser question:\n" + question
+                    : "No relevant code chunks matched the current similarity threshold.\n\nUser question:\n" + question;
             String prompt = queryTier == ChatPromptBuilder.QueryTier.TRIVIAL
                     ? question
                     : (retrievedContext.citations().isEmpty()
-                            ? "No relevant code chunks matched the current similarity threshold.\n\nUser question:\n" + question
-                            : chatPromptBuilder.userPrompt(retrievedContext.contextText(), question));
+                            ? emptyMatchText
+                            : chatPromptBuilder.userPrompt(retrievedContext.contextText(), question, sourceType));
             int estInputTokens = (systemPrompt.length() + prompt.length()) / 4;
 
             int targetMaxTokens;
@@ -533,7 +537,7 @@ public class ChatStreamHandler {
                 heartbeat.cancel(false);
                 firstTokenMs.set(System.currentTimeMillis() - requestStartMs);
                 if (noRelevantCode) {
-                    String noContextNotice = "No relevant code found, answering from general context.\n\n";
+                    String noContextNotice = "No relevant indexed passages found, answering from general context.\n\n";
                     fullReply.append(noContextNotice);
                     safeSend(emitter, sseLock, SseEmitter.event().name("token").data(noContextNotice));
                 }

@@ -6,6 +6,7 @@ import java.util.UUID;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import trace.backend.entity.IndexStatus;
+import trace.backend.entity.SourceType;
 
 public record RepositoryResponse(
         UUID id,
@@ -23,5 +24,49 @@ public record RepositoryResponse(
         int chunkCount,
         int filesTotal,
         int filesProcessed,
-        String errorMessage) {
+        String errorMessage,
+        SourceType sourceType,
+        String fileName,
+        Long fileSizeBytes,
+        Integer pageCount) {
+
+    public RepositoryResponse(
+            UUID id,
+            Long githubRepoId,
+            String owner,
+            String name,
+            String fullName,
+            boolean isPrivate,
+            String defaultBranch,
+            String language,
+            String htmlUrl,
+            String description,
+            IndexStatus indexStatus,
+            Instant indexedAt,
+            int chunkCount,
+            int filesTotal,
+            int filesProcessed,
+            String errorMessage) {
+        this(
+                id,
+                githubRepoId,
+                owner,
+                name,
+                fullName,
+                isPrivate,
+                defaultBranch,
+                language,
+                htmlUrl,
+                description,
+                indexStatus,
+                indexedAt,
+                chunkCount,
+                filesTotal,
+                filesProcessed,
+                errorMessage,
+                SourceType.GITHUB_REPO,
+                null,
+                null,
+                null);
+    }
 }

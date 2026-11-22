@@ -7,7 +7,7 @@ import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { CitationChips } from "@/components/chat/citation-chips";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { ChatMessage, Repository } from "@/lib/api";
+import { isPdfSource, type ChatMessage, type Repository } from "@/lib/api";
 
 const LOADING_MESSAGES = [
   "QUERYING VECTOR SPACE...",
@@ -17,10 +17,16 @@ const LOADING_MESSAGES = [
   "STREAMING TELEMETRY...",
 ];
 
-const STARTER_PROMPTS = [
+const REPO_STARTER_PROMPTS = [
   "Map the system architecture and core module boundaries.",
   "Locate the entry point and trace the startup sequence.",
   "Trace the primary request lifecycle end to end.",
+];
+
+const PDF_STARTER_PROMPTS = [
+  "Summarize the core thesis and key takeaways with page citations.",
+  "List the major sections, findings, or recommendations in this document.",
+  "Identify critical metrics, dates, or definitions referenced in the text.",
 ];
 
 const MessageRow = memo(function MessageRow({
@@ -112,20 +118,16 @@ export function ChatMessages({
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
-  const [showLoading, setShowLoading] = useState(false);
+  const showLoading = Boolean(streaming && !streamText);
 
-  // Show loading messages when streaming but no tokens yet
+  // Rotate loading telemetry messages while waiting for first token
   useEffect(() => {
-    if (streaming && !streamText) {
-      setShowLoading(true);
-      const interval = setInterval(() => {
-        setLoadingMessageIndex(prev => (prev + 1) % LOADING_MESSAGES.length);
-      }, 2500);
-      return () => clearInterval(interval);
-    } else if (streamText) {
-      setShowLoading(false);
-    }
-  }, [streaming, streamText]);
+    if (!showLoading) return;
+    const interval = setInterval(() => {
+      setLoadingMessageIndex((prev) => (prev + 1) % LOADING_MESSAGES.length);
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [showLoading]);
 
   useEffect(() => {
     // Use instant scroll during active token streaming to prevent smooth-scroll layout thrashing
@@ -145,36 +147,42 @@ export function ChatMessages({
   return (
     <ScrollArea className="min-h-0 flex-1 overflow-hidden">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 sm:gap-7 sm:px-5 sm:py-8">
-        {messages.length === 0 && !streamText && (
-          <div className="space-y-5 border border-border bg-card/60 p-5 sm:p-7">
-            <div className="space-y-1.5">
-              <p className="font-mono text-[10px] tracking-[0.2em] text-muted-foreground uppercase">
-                COMMS CHANNEL OPEN // {repo.fullName}
-              </p>
-              <p className="font-heading text-lg font-semibold tracking-[0.06em] uppercase">
-                Ready for Codebase Interrogation
-              </p>
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                Query architecture, execution paths, or symbols. Responses are grounded directly in retrieved source lines.
-              </p>
-            </div>
-            {onSelectPrompt && (
-              <div className="divide-y divide-border/70 border border-border/80">
-                {STARTER_PROMPTS.map((prompt) => (
-                  <button
-                    key={prompt}
-                    type="button"
-                    onClick={() => onSelectPrompt(prompt)}
-                    className="group flex w-full items-center justify-between gap-3 px-3.5 py-2.5 text-left text-xs text-muted-foreground transition-colors hover:bg-foreground/[0.04] hover:text-foreground"
-                  >
-                    <span>{prompt}</span>
-                    <ArrowUpRight className="size-3.5 shrink-0 opacity-40 transition-all group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:opacity-100" />
-                  </button>
-                ))}
+        {messages.length === 0 && !streamText && (() => {
+          const isPdf = isPdfSource(repo);
+          const starterPrompts = isPdf ? PDF_STARTER_PROMPTS : REPO_STARTER_PROMPTS;
+          return (
+            <div className="space-y-5 border border-border bg-card/60 p-5 sm:p-7">
+              <div className="space-y-1.5">
+                <p className="font-mono text-[10px] tracking-[0.2em] text-muted-foreground uppercase">
+                  COMMS CHANNEL OPEN // {repo.fullName}
+                </p>
+                <p className="font-heading text-lg font-semibold tracking-[0.06em] uppercase">
+                  Ready for Interrogation
+                </p>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  {isPdf
+                    ? "Query sections, arguments, or specific details. Responses are grounded directly in retrieved document pages."
+                    : "Query architecture, execution paths, or symbols. Responses are grounded directly in retrieved source lines."}
+                </p>
               </div>
-            )}
-          </div>
-        )}
+              {onSelectPrompt && (
+                <div className="divide-y divide-border/70 border border-border/80">
+                  {starterPrompts.map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      onClick={() => onSelectPrompt(prompt)}
+                      className="group flex w-full items-center justify-between gap-3 px-3.5 py-2.5 text-left text-xs text-muted-foreground transition-colors hover:bg-foreground/[0.04] hover:text-foreground"
+                    >
+                      <span>{prompt}</span>
+                      <ArrowUpRight className="size-3.5 shrink-0 opacity-40 transition-all group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:opacity-100" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         <div className="flex flex-col gap-7">
           {messages.map((message) => (

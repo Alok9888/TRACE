@@ -11,6 +11,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
+import jakarta.persistence.PostLoad;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
@@ -26,7 +27,8 @@ import lombok.Setter;
     uniqueConstraints = @UniqueConstraint(columnNames = { "user_id", "github_repo_id" }),
     indexes = {
         @Index(name = "idx_repositories_user_full_name", columnList = "user_id, full_name"),
-        @Index(name = "idx_repositories_user_owner_name", columnList = "user_id, owner, name")
+        @Index(name = "idx_repositories_user_owner_name", columnList = "user_id, owner, name"),
+        @Index(name = "idx_repositories_user_source_type", columnList = "user_id, source_type")
     }
 )
 @Getter
@@ -41,6 +43,11 @@ public class Repository {
 
     @Column(name = "user_id", nullable = false)
     private UUID userId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "source_type", length = 20)
+    @Builder.Default
+    private SourceType sourceType = SourceType.GITHUB_REPO;
 
     @Column(name = "github_repo_id", nullable = false)
     private Long githubRepoId;
@@ -112,11 +119,33 @@ public class Repository {
     @Column(name = "indexed_files_json", columnDefinition = "TEXT")
     private String indexedFilesJson;
 
+    @Column(name = "file_name", length = 300)
+    private String fileName;
+
+    @Column(name = "file_size_bytes")
+    private Long fileSizeBytes;
+
+    @Column(name = "page_count")
+    private Integer pageCount;
+
+    @Column(name = "storage_key", length = 500)
+    private String storageKey;
+
+    @Column(name = "source_metadata_json", columnDefinition = "TEXT")
+    private String sourceMetadataJson;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
+
+    @PostLoad
+    void onLoad() {
+        if (sourceType == null) {
+            sourceType = SourceType.GITHUB_REPO;
+        }
+    }
 
     @PrePersist
     void onCreate() {
@@ -128,6 +157,13 @@ public class Repository {
         if (indexStatus == null) {
             indexStatus = IndexStatus.PENDING;
         }
+        if (sourceType == null) {
+            sourceType = SourceType.GITHUB_REPO;
+        }
+    }
+
+    public SourceType effectiveSourceType() {
+        return sourceType != null ? sourceType : SourceType.GITHUB_REPO;
     }
 
 }

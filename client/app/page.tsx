@@ -15,17 +15,21 @@ import {
   ArrowUp,
   ArrowUpRight,
   ChevronDown,
+  FileText,
+  GitBranch,
   Mail,
 } from "lucide-react";
 
 import { BrandMark } from "@/components/layout/app-shell";
 import {
   AnimatedNumber,
+  DynamicNounTypewriter,
   Reveal,
   SignatureTypewriter,
   SpotlightCard,
   usePrefersReducedMotion,
 } from "@/components/landing/scroll-reveal";
+import { PdfUploadZone } from "@/components/landing/pdf-upload-zone";
 import {
   PIPELINE_BEATS,
   PipelineScrollytelling,
@@ -95,8 +99,8 @@ const EDGE_ROWS = [
   {
     num: "01",
     title: "Zero Auth",
-    summary: "Paste any public repo. Instant access.",
-    tag: "NO OAUTH",
+    summary: "Paste any public repo or drop a PDF. Instant access.",
+    tag: "MULTI-SOURCE",
   },
   {
     num: "02",
@@ -107,8 +111,8 @@ const EDGE_ROWS = [
   },
   {
     num: "03",
-    title: "Line Citations",
-    summary: "Every answer links directly to file and line.",
+    title: "Exact Citations",
+    summary: "Every answer links directly to file lines or PDF pages.",
     tag: "VERIFIABLE",
   },
   {
@@ -119,7 +123,10 @@ const EDGE_ROWS = [
   },
 ] as const;
 
+const HERO_NOUN_CANDIDATES = ["Repository", "PDF"] as const;
+
 export default function HomePage() {
+  const [sourceMode, setSourceMode] = useState<"repo" | "pdf">("repo");
   const [repoUrl, setRepoUrl] = useState("");
   const [error, setError] = useState("");
   const [isClicked, setIsClicked] = useState(false);
@@ -422,89 +429,149 @@ export default function HomePage() {
             <div />
 
             {/* Clean centered/editorial focal stack */}
-            <div className="max-w-2xl space-y-6 sm:space-y-8">
+            <div className="max-w-2xl space-y-5 sm:space-y-7">
+              {/* Minimal segmented source mode switcher */}
+              <div
+                className="hero-mask-reveal inline-flex items-center rounded-[2px] border border-border/90 bg-background/80 p-0.5 backdrop-blur-md"
+                style={{ animationDelay: "20ms" }}
+                role="tablist"
+                aria-label="Knowledge source type"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={sourceMode === "repo"}
+                  onClick={() => {
+                    setSourceMode("repo");
+                    setError("");
+                  }}
+                  className={`inline-flex items-center gap-1.5 rounded-[1px] px-3 py-1.5 font-mono text-[10px] font-medium tracking-[0.16em] uppercase transition-all duration-200 ${
+                    sourceMode === "repo"
+                      ? "bg-foreground text-background"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <GitBranch className="size-3" />
+                  <span>GitHub Repo</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={sourceMode === "pdf"}
+                  onClick={() => {
+                    setSourceMode("pdf");
+                    setError("");
+                  }}
+                  className={`inline-flex items-center gap-1.5 rounded-[1px] px-3 py-1.5 font-mono text-[10px] font-medium tracking-[0.16em] uppercase transition-all duration-200 ${
+                    sourceMode === "pdf"
+                      ? "bg-foreground text-background"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <FileText className="size-3" />
+                  <span>PDF</span>
+                </button>
+              </div>
+
               <div className="space-y-3 sm:space-y-4">
                 <h1
-                  className="hero-mask-reveal font-heading text-[2.4rem] leading-[0.98] font-semibold tracking-[0.04em] uppercase sm:text-6xl lg:text-[4.5rem]"
+                  className="hero-mask-reveal font-heading text-[2.3rem] leading-[0.98] font-semibold tracking-[0.04em] uppercase sm:text-6xl lg:text-[4.5rem]"
                   style={{ animationDelay: "60ms" }}
                 >
-                  Interrogate Any Repository.
+                  Interrogate Any{" "}
+                  <DynamicNounTypewriter
+                    target={sourceMode === "repo" ? "Repository" : "PDF"}
+                    candidates={HERO_NOUN_CANDIDATES}
+                    reducedMotion={reducedMotion}
+                  />
                 </h1>
                 <p
                   className="hero-mask-reveal max-w-md text-sm leading-relaxed text-muted-foreground sm:text-lg"
                   style={{ animationDelay: "150ms" }}
                 >
-                  Paste a GitHub URL. Get line-cited answers in seconds.
+                  {sourceMode === "repo"
+                    ? "Paste a GitHub URL. Get line-cited answers in seconds."
+                    : "Drop any PDF document. Get page-cited answers in seconds."}
                 </p>
               </div>
 
               <div
-                className="hero-mask-reveal space-y-3"
+                className="hero-mask-reveal min-h-[108px] space-y-3 sm:min-h-[96px]"
                 style={{ animationDelay: "230ms" }}
               >
-                <div className="group/bar flex flex-col border border-input bg-background/85 backdrop-blur-sm transition-all duration-200 hover:border-foreground/50 focus-within:border-foreground sm:flex-row">
-                  <div className="flex min-w-0 flex-1 items-center">
-                    <div className="flex shrink-0 items-center border-r border-border/70 px-3 py-2 font-mono text-[11px] tracking-[0.12em] text-muted-foreground uppercase transition-colors group-focus-within/bar:text-foreground sm:px-3.5">
-                      GIT
-                    </div>
-                    <input
-                      ref={inputRef}
-                      value={repoUrl}
-                      onChange={(event) => {
-                        setRepoUrl(event.target.value);
-                        if (error) setError("");
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") launchUrl(repoUrl);
-                      }}
-                      placeholder="https://github.com/owner/repository"
-                      aria-label="GitHub repository URL"
-                      className="h-12 min-w-0 flex-1 bg-transparent px-3 font-mono text-xs tracking-wide text-foreground outline-none placeholder:text-muted-foreground/60 sm:px-4 sm:text-sm"
-                    />
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="lg"
-                    onClick={() => launchUrl(repoUrl)}
-                    disabled={isClicked}
-                    className={`h-11 rounded-none border-0 border-t border-input bg-transparent px-7 text-foreground transition-all duration-200 hover:bg-foreground hover:text-background sm:h-12 sm:border-t-0 sm:border-l ${
-                      isClicked ? "pointer-events-none opacity-60" : ""
-                    }`}
-                  >
-                    Analyze
-                    <ArrowRight
-                      className={`size-3.5 transition-transform duration-200 ${
-                        isClicked ? "translate-x-1" : "group-hover/button:translate-x-1"
-                      }`}
-                    />
-                  </Button>
-                </div>
-
-                {error ? (
-                  <p role="alert" className="font-mono text-xs tracking-wide text-destructive">
-                    ERR // {error}
-                  </p>
-                ) : (
-                  /* 1-tap sample repos — huge UX win on mobile where typing URLs is slow */
-                  <div className="flex flex-wrap items-center gap-2 pt-0.5">
-                    <span className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground/75 uppercase">
-                      Try:
-                    </span>
-                    {SAMPLE_REPOS.map((sample) => (
-                      <button
-                        key={sample.label}
-                        type="button"
-                        onClick={() => {
-                          setRepoUrl(sample.url);
-                          setError("");
-                          inputRef.current?.focus();
-                        }}
-                        className="rounded-[2px] border border-border/80 bg-background/60 px-2.5 py-1 font-mono text-[10px] tracking-[0.04em] text-muted-foreground transition-colors hover:border-foreground hover:text-foreground"
+                {sourceMode === "repo" ? (
+                  <>
+                    <div className="group/bar flex flex-col border border-input bg-background/85 backdrop-blur-sm transition-all duration-200 hover:border-foreground/50 focus-within:border-foreground sm:flex-row">
+                      <div className="flex min-w-0 flex-1 items-center">
+                        <div className="flex shrink-0 items-center border-r border-border/70 px-3 py-2 font-mono text-[11px] tracking-[0.12em] text-muted-foreground uppercase transition-colors group-focus-within/bar:text-foreground sm:px-3.5">
+                          GIT
+                        </div>
+                        <input
+                          ref={inputRef}
+                          value={repoUrl}
+                          onChange={(event) => {
+                            setRepoUrl(event.target.value);
+                            if (error) setError("");
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") launchUrl(repoUrl);
+                          }}
+                          placeholder="https://github.com/owner/repository"
+                          aria-label="GitHub repository URL"
+                          className="h-12 min-w-0 flex-1 bg-transparent px-3 font-mono text-xs tracking-wide text-foreground outline-none placeholder:text-muted-foreground/60 sm:px-4 sm:text-sm"
+                        />
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="lg"
+                        onClick={() => launchUrl(repoUrl)}
+                        disabled={isClicked}
+                        className={`h-11 rounded-none border-0 border-t border-input bg-transparent px-7 text-foreground transition-all duration-200 hover:bg-foreground hover:text-background sm:h-12 sm:border-t-0 sm:border-l ${
+                          isClicked ? "pointer-events-none opacity-60" : ""
+                        }`}
                       >
-                        {sample.label}
-                      </button>
-                    ))}
-                  </div>
+                        Analyze
+                        <ArrowRight
+                          className={`size-3.5 transition-transform duration-200 ${
+                            isClicked ? "translate-x-1" : "group-hover/button:translate-x-1"
+                          }`}
+                        />
+                      </Button>
+                    </div>
+
+                    {error ? (
+                      <p role="alert" className="font-mono text-xs tracking-wide text-destructive">
+                        ERR // {error}
+                      </p>
+                    ) : (
+                      /* 1-tap sample repos — huge UX win on mobile where typing URLs is slow */
+                      <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                        <span className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground/75 uppercase">
+                          Try:
+                        </span>
+                        {SAMPLE_REPOS.map((sample) => (
+                          <button
+                            key={sample.label}
+                            type="button"
+                            onClick={() => {
+                              setRepoUrl(sample.url);
+                              setError("");
+                              inputRef.current?.focus();
+                            }}
+                            className="rounded-[2px] border border-border/80 bg-background/60 px-2.5 py-1 font-mono text-[10px] tracking-[0.04em] text-muted-foreground transition-colors hover:border-foreground hover:text-foreground"
+                          >
+                            {sample.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <PdfUploadZone
+                    onUploaded={(source) => {
+                      router.push(`/chat/${source.id}`);
+                    }}
+                  />
                 )}
               </div>
             </div>
@@ -713,7 +780,7 @@ export default function HomePage() {
                   onClick={() => scrollToChapter(0, true)}
                   className="group relative inline-flex items-center gap-1.5 font-mono text-[10px] font-medium tracking-[0.16em] text-foreground uppercase"
                 >
-                  <span>Try a Repo</span>
+                  <span>Try a Source</span>
                   <ArrowUp className="size-3 transition-transform duration-200 group-hover:-translate-y-0.5" />
                   <span className="absolute -bottom-1 left-0 h-px w-full origin-left scale-x-0 bg-foreground transition-transform duration-300 group-hover:scale-x-100" />
                 </button>

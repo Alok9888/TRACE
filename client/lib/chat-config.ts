@@ -14,12 +14,14 @@ export const CHAT_CONFIG_LIMITS = {
   systemPromptMaxLength: 1200,
 } as const;
 
+export const LEGACY_DEFAULT_SYSTEM_PROMPT = "Answer from repo code only.";
+
 export const DEFAULT_CHAT_CONFIG: ChatConfig = {
   temperature: 0.2,
   maxTokens: 1024,
   topK: 5,
   similarityThreshold: 0.35,
-  systemPrompt: "Answer from repo code only.",
+  systemPrompt: "Answer from indexed source content only.",
 };
 
 const STORAGE_KEY = "trace.chat.config.v1";
@@ -88,12 +90,16 @@ export function saveChatConfig(config: ChatConfig): void {
 }
 
 export function isDefaultChatConfig(config: ChatConfig): boolean {
+  const prompt = config.systemPrompt.trim();
+  const promptIsDefault =
+    !prompt ||
+    prompt === DEFAULT_CHAT_CONFIG.systemPrompt ||
+    prompt === LEGACY_DEFAULT_SYSTEM_PROMPT;
   return (
     config.temperature === DEFAULT_CHAT_CONFIG.temperature &&
     config.maxTokens === DEFAULT_CHAT_CONFIG.maxTokens &&
     config.topK === DEFAULT_CHAT_CONFIG.topK &&
     config.similarityThreshold === DEFAULT_CHAT_CONFIG.similarityThreshold &&
-    (config.systemPrompt.trim() || DEFAULT_CHAT_CONFIG.systemPrompt) ===
-      DEFAULT_CHAT_CONFIG.systemPrompt
+    promptIsDefault
   );
 }

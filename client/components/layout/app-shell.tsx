@@ -103,7 +103,7 @@ export function AppShell({
                     </SidebarMenuItem>
                   ))}
                 </SidebarMenu>
-                {/* Add New Repository button - only shown in Workspace group */}
+                {/* Add New Source button - only shown in Workspace group */}
                 {group.label === "Workspace" && showAddRepoButton && (
                   <SidebarMenuItem className="mt-2">
                     <SidebarMenuButton
@@ -113,7 +113,7 @@ export function AppShell({
                       onClick={() => setAddRepoDialogOpen(true)}
                     >
                       <Plus className="size-3.5" />
-                      <span>Add Repository</span>
+                      <span>Add Source</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 )}

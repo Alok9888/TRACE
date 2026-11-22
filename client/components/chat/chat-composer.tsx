@@ -7,19 +7,26 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Kbd } from "@/components/ui/kbd";
 import { Spinner } from "@/components/ui/spinner";
+import type { SourceType } from "@/lib/api";
 
 export const ChatComposer = memo(function ChatComposer({
   disabled,
   streaming,
+  sourceType,
   onSend,
   onStop,
 }: {
   disabled?: boolean;
   streaming?: boolean;
+  sourceType?: SourceType;
   onSend: (content: string) => void | Promise<void>;
   onStop?: () => void;
 }) {
   const [value, setValue] = useState("");
+  const placeholder =
+    sourceType === "PDF"
+      ? "Query sections, claims, or specific pages..."
+      : "Query architecture, execution flows, or indexed context...";
 
   async function submit() {
     const content = value.trim();
@@ -35,7 +42,7 @@ export const ChatComposer = memo(function ChatComposer({
           <Textarea
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            placeholder="Query architecture, execution flows, or symbols..."
+            placeholder={placeholder}
             disabled={disabled}
             className="min-h-11 flex-1 resize-none border-0 bg-transparent px-2.5 py-2 text-sm shadow-none focus-visible:ring-0"
             onKeyDown={(e) => {

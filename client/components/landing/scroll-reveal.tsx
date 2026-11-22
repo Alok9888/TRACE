@@ -181,3 +181,86 @@ export function SignatureTypewriter({
     </span>
   );
 }
+
+/**
+ * Smooth character-by-character backspace + retype transition strictly on a target noun.
+ * Reserves the widest candidate width via an invisible grid layer to prevent layout shift,
+ * handles rapid toggling safely via effect timer cleanup, and swaps immediately under reduced motion.
+ */
+export function DynamicNounTypewriter({
+  target,
+  candidates,
+  reducedMotion,
+  trailingPunctuation = ".",
+  className,
+}: {
+  target: string;
+  candidates: readonly string[];
+  reducedMotion: boolean;
+  trailingPunctuation?: string;
+  className?: string;
+}) {
+  const [displayed, setDisplayed] = useState(target);
+
+  useEffect(() => {
+    if (reducedMotion || displayed === target) return;
+
+    const isPrefix = target.startsWith(displayed);
+    const delayMs = isPrefix
+      ? displayed.length === 0
+        ? 75
+        : 44
+      : 32;
+
+    const timer = window.setTimeout(() => {
+      setDisplayed((prev) => {
+        if (target.startsWith(prev)) {
+          return target.slice(0, prev.length + 1);
+        }
+        return prev.slice(0, Math.max(0, prev.length - 1));
+      });
+    }, delayMs);
+
+    return () => window.clearTimeout(timer);
+  }, [displayed, target, reducedMotion]);
+
+  const activeText = reducedMotion ? target : displayed;
+  const isAnimating = !reducedMotion && activeText !== target;
+  const widestCandidate = candidates.reduce(
+    (longest, item) => (item.length > longest.length ? item : longest),
+    target
+  );
+
+  return (
+    <span
+      className={cn("inline-grid items-baseline align-baseline", className)}
+      aria-live="polite"
+      aria-label={`${target}${trailingPunctuation}`}
+    >
+      {/* Reserve width of the widest candidate so headline lines never jump or reflow */}
+      <span
+        aria-hidden="true"
+        className="invisible col-start-1 row-start-1 inline-flex items-baseline whitespace-pre select-none"
+      >
+        <span>
+          {widestCandidate}
+          {trailingPunctuation}
+        </span>
+        <span className="ml-0.5 inline-block h-[0.82em] w-[2px]" />
+      </span>
+
+      <span
+        aria-hidden="true"
+        className="col-start-1 row-start-1 inline-flex items-baseline whitespace-pre"
+      >
+        <span>
+          {activeText}
+          {!isAnimating ? trailingPunctuation : ""}
+        </span>
+        {isAnimating && (
+          <span className="trace-caret ml-0.5 inline-block h-[0.82em] w-[2px] translate-y-[0.04em] bg-foreground" />
+        )}
+      </span>
+    </span>
+  );
+}

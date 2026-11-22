@@ -2,7 +2,7 @@
 
 import { Moon, Sun, Copy, Check } from "lucide-react";
 import { useTheme } from "next-themes";
-import { useEffect, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 
 
 import { ModeToggle } from "@/components/ui/mode-toggle";
@@ -20,15 +20,17 @@ import { Button } from "@/components/ui/button";
 import { getWorkspaceId } from "@/lib/api";
 import { toast } from "@/components/ui/toast";
 
+const noopSubscribe = () => () => {};
+
 export function SettingsDashboard() {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
   const [copied, setCopied] = useState(false);
-  const [workspaceId, setWorkspaceId] = useState("");
-
-  useEffect(() => {
-    setWorkspaceId(getWorkspaceId());
-  }, []);
+  const workspaceId = useSyncExternalStore(
+    noopSubscribe,
+    () => getWorkspaceId(),
+    () => ""
+  );
 
   const copyWorkspaceId = async () => {
     try {
@@ -40,7 +42,7 @@ export function SettingsDashboard() {
         type: "success",
       });
       setTimeout(() => setCopied(false), 2000);
-    } catch (error) {
+    } catch {
       toast.add({
         title: "Failed to copy",
         description: "Could not copy workspace ID",
@@ -54,16 +56,16 @@ export function SettingsDashboard() {
       <Card>
         <CardHeader>
           <CardTitle className="font-heading text-xs font-semibold tracking-[0.18em] uppercase">
-            01 // Repository Access
+            01 // Source Access
           </CardTitle>
           <CardDescription className="text-xs">
-            Public GitHub repository interrogation with zero OAuth overhead.
+            Multi-source interrogation across public GitHub repositories and PDF documents with zero OAuth overhead.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-xs leading-relaxed text-muted-foreground">
-            Only public repositories are supported. Provide a repository URL on
-            the launch console to stream, vectorize, and open a comms channel.
+            Provide a public GitHub URL or upload a text-searchable PDF (up to 20 MB) on
+            the launch console or sidebar to vectorize and open a grounded comms channel.
           </p>
         </CardContent>
       </Card>
@@ -74,7 +76,7 @@ export function SettingsDashboard() {
             02 // Workspace Telemetry ID
           </CardTitle>
           <CardDescription className="text-xs">
-            Unique local workspace identifier isolating your indexed repositories.
+            Unique local workspace identifier isolating your indexed sources.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

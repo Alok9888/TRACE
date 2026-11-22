@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useCallback, type PointerEvent as ReactPointerEvent } from "react";
@@ -7,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
   ExternalLink,
+  FileText,
   GitBranch,
   Lock,
   MessageSquare,
@@ -22,7 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import { getRepoProgress, useStartIndexing } from "@/hooks/use-repos";
-import { api, type Repository } from "@/lib/api";
+import { api, formatFileSize, isPdfSource, type Repository } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 
@@ -30,6 +30,7 @@ export function RepoCard({ repo }: { repo: Repository }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const indexMutation = useStartIndexing();
+  const isPdf = isPdfSource(repo);
   const isIndexing =
     repo.indexStatus === "INDEXING" || indexMutation.isPending;
   const isFailed = repo.indexStatus === "FAILED";
@@ -51,7 +52,7 @@ export function RepoCard({ repo }: { repo: Repository }) {
   }
 
   function handlePrimary() {
-    if (repo.indexStatus === "READY") {
+    if (repo.indexStatus === "READY" || isPdf) {
       openChat();
       return;
     }
@@ -81,12 +82,18 @@ export function RepoCard({ repo }: { repo: Repository }) {
       <div className="border-b border-border/80 px-4 py-3.5">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
-            <div className="mt-0.5 opacity-80 grayscale">
-              <LanguageBadge language={repo.language} showLabel={false} />
-            </div>
+            {isPdf ? (
+              <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-[2px] border border-border bg-background/80 text-foreground/85">
+                <FileText className="size-3.5" />
+              </div>
+            ) : (
+              <div className="mt-0.5 opacity-80 grayscale">
+                <LanguageBadge language={repo.language} showLabel={false} />
+              </div>
+            )}
             <div className="min-w-0">
               <p className="truncate font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
-                {repo.owner}
+                {isPdf ? "PDF DOCUMENT" : repo.owner}
               </p>
               <h3 className="truncate font-heading text-base font-semibold tracking-[0.04em]">
                 {repo.name}
@@ -100,7 +107,10 @@ export function RepoCard({ repo }: { repo: Repository }) {
       <div className="flex flex-1 flex-col gap-4 p-4">
         {!isFailed && (
           <p className="line-clamp-2 min-h-10 text-xs leading-relaxed text-muted-foreground">
-            {repo.description || "No repository specification provided."}
+            {repo.description ||
+              (isPdf
+                ? "Indexed PDF document ready for page-cited queries."
+                : "No source specification provided.")}
           </p>
         )}
 
@@ -111,25 +121,46 @@ export function RepoCard({ repo }: { repo: Repository }) {
         )}
 
         <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px] tracking-[0.08em] text-muted-foreground uppercase">
-          {repo.isPrivate && (
-            <span className="inline-flex items-center gap-1 rounded-[2px] border border-border px-2 py-0.5">
-              <Lock className="size-2.5" />
-              Private
-            </span>
-          )}
-
-          <span className="inline-flex items-center gap-1 rounded-[2px] border border-border px-2 py-0.5">
-            <GitBranch className="size-2.5" />
-            {repo.defaultBranch}
-          </span>
-
-          {repo.language && (
-            <span className="inline-flex items-center gap-1.5 rounded-[2px] border border-border px-2 py-0.5 text-foreground/85">
-              <span className="grayscale">
-                <LanguageIcon language={repo.language} size="sm" />
+          {isPdf ? (
+            <>
+              <span className="inline-flex items-center gap-1 rounded-[2px] border border-border px-2 py-0.5 text-foreground/85">
+                <FileText className="size-2.5" />
+                PDF
               </span>
-              {repo.language}
-            </span>
+              {repo.pageCount != null && repo.pageCount > 0 && (
+                <span className="tabular-telemetry rounded-[2px] border border-border px-2 py-0.5">
+                  {repo.pageCount} {repo.pageCount === 1 ? "page" : "pages"}
+                </span>
+              )}
+              {repo.fileSizeBytes != null && repo.fileSizeBytes > 0 && (
+                <span className="tabular-telemetry rounded-[2px] border border-border px-2 py-0.5">
+                  {formatFileSize(repo.fileSizeBytes)}
+                </span>
+              )}
+            </>
+          ) : (
+            <>
+              {repo.isPrivate && (
+                <span className="inline-flex items-center gap-1 rounded-[2px] border border-border px-2 py-0.5">
+                  <Lock className="size-2.5" />
+                  Private
+                </span>
+              )}
+
+              <span className="inline-flex items-center gap-1 rounded-[2px] border border-border px-2 py-0.5">
+                <GitBranch className="size-2.5" />
+                {repo.defaultBranch}
+              </span>
+
+              {repo.language && (
+                <span className="inline-flex items-center gap-1.5 rounded-[2px] border border-border px-2 py-0.5 text-foreground/85">
+                  <span className="grayscale">
+                    <LanguageIcon language={repo.language} size="sm" />
+                  </span>
+                  {repo.language}
+                </span>
+              )}
+            </>
           )}
 
           {repo.chunkCount > 0 && (
@@ -164,7 +195,7 @@ export function RepoCard({ repo }: { repo: Repository }) {
       </div>
 
       <div className="mt-auto flex items-center justify-between gap-2 border-t border-border/80 bg-background/40 px-4 py-3">
-        {repo.htmlUrl ? (
+        {!isPdf && repo.htmlUrl ? (
           <Button
             nativeButton={false}
             variant="ghost"
@@ -178,10 +209,12 @@ export function RepoCard({ repo }: { repo: Repository }) {
             }
           >
             <ExternalLink data-icon="inline-start" />
-            Source
+            Origin
           </Button>
         ) : (
-          <span />
+          <span className="font-mono text-[10px] tracking-[0.12em] text-muted-foreground/75 uppercase">
+            {isPdf ? "UPLOADED" : ""}
+          </span>
         )}
 
         <div className="flex gap-2">
@@ -192,38 +225,40 @@ export function RepoCard({ repo }: { repo: Repository }) {
             </Button>
           )}
 
-          <Button
-            size="sm"
-            variant={isFailed ? "outline" : "default"}
-            className={cn(
-              isFailed &&
-              "border-destructive/40 text-destructive hover:border-destructive hover:bg-destructive hover:text-white"
-            )}
-            disabled={isIndexing}
-            onClick={handlePrimary}
-          >
-            {isIndexing ? (
-              <>
-                <Spinner data-icon="inline-start" />
-                Syncing
-              </>
-            ) : repo.indexStatus === "READY" ? (
-              <>
-                Open
-                <ArrowRight data-icon="inline-end" />
-              </>
-            ) : isFailed ? (
-              <>
-                <RotateCcw data-icon="inline-start" />
-                Retry
-              </>
-            ) : (
-              <>
-                <Sparkles data-icon="inline-start" />
-                Index
-              </>
-            )}
-          </Button>
+          {!(isPdf && isFailed) && (
+            <Button
+              size="sm"
+              variant={isFailed ? "outline" : "default"}
+              className={cn(
+                isFailed &&
+                  "border-destructive/40 text-destructive hover:border-destructive hover:bg-destructive hover:text-white"
+              )}
+              disabled={isIndexing}
+              onClick={handlePrimary}
+            >
+              {isIndexing ? (
+                <>
+                  <Spinner data-icon="inline-start" />
+                  Syncing
+                </>
+              ) : repo.indexStatus === "READY" ? (
+                <>
+                  Open
+                  <ArrowRight data-icon="inline-end" />
+                </>
+              ) : isFailed ? (
+                <>
+                  <RotateCcw data-icon="inline-start" />
+                  Retry
+                </>
+              ) : (
+                <>
+                  <Sparkles data-icon="inline-start" />
+                  Index
+                </>
+              )}
+            </Button>
+          )}
         </div>
       </div>
     </article>

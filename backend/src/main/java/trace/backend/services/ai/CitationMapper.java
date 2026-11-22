@@ -29,7 +29,11 @@ public class CitationMapper {
                 stringVal(meta.get("filePath")),
                 intVal(meta.get("startLine")),
                 intVal(meta.get("endLine")),
-                stringVal(meta.get("language")));
+                stringVal(meta.get("language")),
+                stringVal(meta.get(RagSettings.METADATA_SOURCE_TYPE)),
+                intVal(meta.get(RagSettings.METADATA_PAGE_NUMBER)),
+                stringVal(meta.get(RagSettings.METADATA_SECTION_HEADING)),
+                intVal(meta.get("chunkIndex")));
     }
 
     public String toJson(List<CitationDto> citations) {

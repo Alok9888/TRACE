@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { FolderGit2 } from "lucide-react";
+import { Layers } from "lucide-react";
 
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { RepoCard } from "@/components/dashboard/repo-card";
@@ -15,42 +15,41 @@ import {
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRefreshRepos, useRepos } from "@/hooks/use-repos";
-import type { IndexStatus } from "@/lib/api";
+import type { IndexStatus, SourceType } from "@/lib/api";
 
 type FilterStatus = "ALL" | IndexStatus;
+type FilterSourceType = "ALL" | SourceType;
 
 export function RepoDashboard() {
   const reposQuery = useRepos();
   const refresh = useRefreshRepos();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<FilterStatus>("ALL");
-  const [visibility, setVisibility] = useState<"all" | "public" | "private">(
-    "all"
-  );
+  const [sourceFilter, setSourceFilter] = useState<FilterSourceType>("ALL");
 
   const filtered = useMemo(() => {
     const list = reposQuery.data ?? [];
     const q = search.trim().toLowerCase();
 
     return list.filter((repo) => {
+      const effectiveType: SourceType = repo.sourceType ?? "GITHUB_REPO";
       if (status !== "ALL" && repo.indexStatus !== status) return false;
-      if (visibility === "private" && !repo.isPrivate) return false;
-      if (visibility === "public" && repo.isPrivate) return false;
+      if (sourceFilter !== "ALL" && effectiveType !== sourceFilter) return false;
       if (!q) return true;
       return (
         repo.fullName.toLowerCase().includes(q) ||
+        (repo.fileName ?? "").toLowerCase().includes(q) ||
         (repo.description ?? "").toLowerCase().includes(q) ||
         (repo.language ?? "").toLowerCase().includes(q)
       );
     });
-  }, [reposQuery.data, search, status, visibility]);
+  }, [reposQuery.data, search, status, sourceFilter]);
 
   const readyCount =
     reposQuery.data?.filter((r) => r.indexStatus === "READY").length ?? 0;
 
   return (
     <div className="relative flex min-h-full flex-col overflow-hidden">
-      {/* Subtle monochrome planetary silhouette watermark in dark void */}
       <img
         src="/images/earth-dark.jpg"
         alt=""
@@ -60,8 +59,8 @@ export function RepoDashboard() {
       <DashboardHeader
         search={search}
         onSearchChange={setSearch}
-        visibility={visibility}
-        onVisibilityChange={setVisibility}
+        sourceFilter={sourceFilter}
+        onSourceFilterChange={setSourceFilter}
         status={status}
         onStatusChange={setStatus}
         totalCount={reposQuery.data?.length}
@@ -83,7 +82,7 @@ export function RepoDashboard() {
           <Empty className="rounded-[2px] border border-border">
             <EmptyHeader>
               <EmptyMedia variant="icon">
-                <FolderGit2 />
+                <Layers />
               </EmptyMedia>
               <EmptyTitle className="font-heading tracking-[0.1em] uppercase">
                 Telemetry Unavailable
@@ -100,13 +99,13 @@ export function RepoDashboard() {
           <Empty className="rounded-[2px] border border-border">
             <EmptyHeader>
               <EmptyMedia variant="icon">
-                <FolderGit2 />
+                <Layers />
               </EmptyMedia>
               <EmptyTitle className="font-heading tracking-[0.1em] uppercase">
-                No Matching Repositories
+                No Matching Sources
               </EmptyTitle>
               <EmptyDescription>
-                Adjust active filters or add a repository from the sidebar.
+                Adjust active filters or add a GitHub repository or PDF from the sidebar.
               </EmptyDescription>
             </EmptyHeader>
           </Empty>

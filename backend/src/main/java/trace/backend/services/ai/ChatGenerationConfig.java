@@ -32,6 +32,7 @@ public record ChatGenerationConfig(
     public static final double DEFAULT_SIMILARITY_THRESHOLD = RagSettings.SIMILARITY_THRESHOLD;
 
     public static final String DEFAULT_SYSTEM_PROMPT = "Answer from repo code only.";
+    public static final String GENERIC_DEFAULT_SYSTEM_PROMPT = "Answer from indexed source content only.";
     public static final int MAX_SYSTEM_PROMPT_CHARS = 1200;
 
     private static final ChatGenerationConfig DEFAULTS = new ChatGenerationConfig(
@@ -74,7 +75,16 @@ public record ChatGenerationConfig(
     }
 
     public boolean isDefaultSystemPrompt() {
-        return DEFAULT_SYSTEM_PROMPT.equalsIgnoreCase(systemPrompt.trim());
+        return isDefaultPromptString(systemPrompt);
+    }
+
+    public static boolean isDefaultPromptString(String prompt) {
+        if (prompt == null || prompt.isBlank()) {
+            return true;
+        }
+        String trimmed = prompt.trim();
+        return DEFAULT_SYSTEM_PROMPT.equalsIgnoreCase(trimmed)
+                || GENERIC_DEFAULT_SYSTEM_PROMPT.equalsIgnoreCase(trimmed);
     }
 
     /** Compact deterministic key segment so Q&A cache isolates responses across config changes. */

@@ -5,7 +5,7 @@ import { useMemo } from "react";
 import {
   AlertCircle,
   CheckCircle2,
-  FolderGit2,
+  Layers,
   LoaderCircle,
   MessageSquareCode,
 } from "lucide-react";
@@ -31,7 +31,7 @@ function StatCard({
   label: string;
   value: string | number;
   hint?: string;
-  icon: typeof FolderGit2;
+  icon: typeof Layers;
 }) {
   return (
     <Card size="sm">
@@ -104,10 +104,10 @@ export function OverviewDashboard() {
         ) : (
           <>
             <StatCard
-              label="Repositories"
+              label="Sources"
               value={repos.length}
-              hint="Connected from GitHub"
-              icon={FolderGit2}
+              hint="Repos & PDF documents"
+              icon={Layers}
             />
             <StatCard
               label="Ready to chat"
@@ -118,13 +118,13 @@ export function OverviewDashboard() {
             <StatCard
               label="Indexed chunks"
               value={totalChunks.toLocaleString()}
-              hint="Searchable code segments"
+              hint="Searchable vector segments"
               icon={MessageSquareCode}
             />
             <StatCard
               label="Needs attention"
               value={failedCount}
-              hint={failedCount > 0 ? "Review failed indexing jobs" : "All repos healthy"}
+              hint={failedCount > 0 ? "Review failed indexing jobs" : "All sources healthy"}
               icon={failedCount > 0 ? AlertCircle : LoaderCircle}
             />
           </>
@@ -136,7 +136,7 @@ export function OverviewDashboard() {
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="font-heading text-sm font-semibold tracking-[0.16em] uppercase">
-                Recent Repositories
+                Recent Sources
               </h2>
               <p className="font-mono text-[11px] tracking-[0.06em] text-muted-foreground">
                 Latest indexed targets ready for interrogation.
@@ -165,10 +165,9 @@ export function OverviewDashboard() {
           ) : (
             <Card>
               <CardHeader>
-                <CardTitle>No repositories yet</CardTitle>
+                <CardTitle>No indexed sources yet</CardTitle>
                 <CardDescription>
-                  Sync your GitHub repositories to start indexing and chatting
-                  with your code.
+                  Add a public GitHub repository or upload a PDF document to start indexing and querying your context.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -176,7 +175,7 @@ export function OverviewDashboard() {
                   href="/dashboard"
                   className="text-sm font-medium text-primary hover:underline"
                 >
-                  Go to repositories
+                  Go to sources
                 </Link>
               </CardContent>
             </Card>

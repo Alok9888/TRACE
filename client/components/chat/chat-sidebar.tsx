@@ -2,7 +2,7 @@
 
 import { memo, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { ChevronDown, Plus, RotateCcw, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, FileText, Plus, RotateCcw, SlidersHorizontal } from "lucide-react";
 
 import { IndexStatusBadge } from "@/components/dashboard/repo-status";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,7 @@ import {
   useCreateChatSession,
 } from "@/hooks/use-chat";
 import { useStartIndexing } from "@/hooks/use-repos";
-import type { Repository } from "@/lib/api";
+import { formatFileSize, isPdfSource, type Repository } from "@/lib/api";
 import {
   CHAT_CONFIG_LIMITS,
   DEFAULT_CHAT_CONFIG,
@@ -93,6 +93,7 @@ export const ChatSidebar = memo(function ChatSidebar({
   onConfigChange: (next: ChatConfig) => void;
 }) {
   const ready = repo.indexStatus === "READY";
+  const isPdf = isPdfSource(repo);
   const sessionsQuery = useChatSessions(repo.id, ready);
   const createSession = useCreateChatSession(repo.id);
   const reindex = useStartIndexing();
@@ -168,35 +169,48 @@ export const ChatSidebar = memo(function ChatSidebar({
             <Plus className="size-3" />
             New
           </Button>
-          <Button
-            size="icon-xs"
-            variant="outline"
-            disabled={reindex.isPending || repo.indexStatus === "INDEXING"}
-            onClick={() => reindex.mutate(repo.id)}
-            aria-label="Re-index repository"
-          >
-            <RotateCcw className="size-3" />
-          </Button>
+          {!isPdf && (
+            <Button
+              size="icon-xs"
+              variant="outline"
+              disabled={reindex.isPending || repo.indexStatus === "INDEXING"}
+              onClick={() => reindex.mutate(repo.id)}
+              aria-label="Re-index source"
+            >
+              <RotateCcw className="size-3" />
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* Desktop repository header */}
+      {/* Desktop source header */}
       <div className="hidden space-y-3.5 p-4 md:block">
         <div className="space-y-1.5">
-          <p className="font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
-            TARGET REPOSITORY
+          <p className="flex items-center gap-1.5 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+            {isPdf && <FileText className="size-3" />}
+            <span>{isPdf ? "TARGET DOCUMENT" : "TARGET SOURCE"}</span>
           </p>
           <p className="truncate font-heading text-sm font-semibold tracking-[0.06em]">
             {repo.fullName}
           </p>
           <div className="flex flex-wrap items-center gap-2 pt-0.5">
             <IndexStatusBadge status={repo.indexStatus} />
+            {isPdf && repo.pageCount != null && repo.pageCount > 0 && (
+              <span className="tabular-telemetry font-mono text-[10px] tracking-[0.1em] text-muted-foreground uppercase">
+                {repo.pageCount} {repo.pageCount === 1 ? "PAGE" : "PAGES"}
+              </span>
+            )}
+            {isPdf && repo.fileSizeBytes != null && repo.fileSizeBytes > 0 && (
+              <span className="tabular-telemetry font-mono text-[10px] tracking-[0.1em] text-muted-foreground uppercase">
+                {formatFileSize(repo.fileSizeBytes)}
+              </span>
+            )}
             {repo.chunkCount > 0 && (
               <span className="tabular-telemetry font-mono text-[10px] tracking-[0.1em] text-muted-foreground uppercase">
                 {repo.chunkCount.toLocaleString()} VECTORS
               </span>
             )}
-            {repo.isPrivate && (
+            {!isPdf && repo.isPrivate && (
               <span className="font-mono text-[10px] tracking-[0.12em] text-muted-foreground uppercase">
                 PRIVATE
               </span>
@@ -221,15 +235,17 @@ export const ChatSidebar = memo(function ChatSidebar({
             <Plus data-icon="inline-start" />
             New Channel
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={reindex.isPending || repo.indexStatus === "INDEXING"}
-            onClick={() => reindex.mutate(repo.id)}
-            aria-label="Re-index repository"
-          >
-            <RotateCcw className="size-3.5" />
-          </Button>
+          {!isPdf && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={reindex.isPending || repo.indexStatus === "INDEXING"}
+              onClick={() => reindex.mutate(repo.id)}
+              aria-label="Re-index source"
+            >
+              <RotateCcw className="size-3.5" />
+            </Button>
+          )}
         </div>
       </div>
 

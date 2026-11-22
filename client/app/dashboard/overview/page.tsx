@@ -7,7 +7,7 @@ export default function OverviewPage() {
   return (
     <AppShell
       title="Overview"
-      description="Workspace stats and recent repository activity"
+      description="Workspace telemetry and recent indexed sources"
     >
       <OverviewDashboard />
     </AppShell>

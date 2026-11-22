@@ -8,15 +8,16 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
-import type { IndexStatus } from "@/lib/api";
+import type { IndexStatus, SourceType } from "@/lib/api";
 
 type FilterStatus = "ALL" | IndexStatus;
+type FilterSourceType = "ALL" | SourceType;
 
 type DashboardHeaderProps = {
   search: string;
   onSearchChange: (value: string) => void;
-  visibility: "all" | "public" | "private";
-  onVisibilityChange: (value: "all" | "public" | "private") => void;
+  sourceFilter: FilterSourceType;
+  onSourceFilterChange: (value: FilterSourceType) => void;
   status: FilterStatus;
   onStatusChange: (value: FilterStatus) => void;
   totalCount?: number;
@@ -25,10 +26,10 @@ type DashboardHeaderProps = {
   isSyncing?: boolean;
 };
 
-const visibilityFilters = [
-  { value: "all" as const, label: "All" },
-  { value: "public" as const, label: "Public" },
-  { value: "private" as const, label: "Private" },
+const sourceTypeFilters: { value: FilterSourceType; label: string }[] = [
+  { value: "ALL", label: "All" },
+  { value: "GITHUB_REPO", label: "GitHub" },
+  { value: "PDF", label: "PDF" },
 ];
 
 const statusFilters: { value: FilterStatus; label: string }[] = [
@@ -67,8 +68,8 @@ function FilterPill({
 export function DashboardHeader({
   search,
   onSearchChange,
-  visibility,
-  onVisibilityChange,
+  sourceFilter,
+  onSourceFilterChange,
   status,
   onStatusChange,
   totalCount,
@@ -85,12 +86,12 @@ export function DashboardHeader({
               <SidebarTrigger className="-ml-1" />
               <div className="min-w-0">
                 <h1 className="truncate font-heading text-base font-semibold tracking-[0.14em] uppercase sm:text-lg">
-                  Repositories
+                  Sources
                 </h1>
                 <p className="tabular-telemetry truncate font-mono text-[10px] tracking-[0.12em] text-muted-foreground uppercase sm:text-[11px]">
                   {totalCount != null
                     ? `${totalCount} TRACKED // ${readyCount ?? 0} ONLINE`
-                    : "SYNC AND INDEX A REPOSITORY TO INITIATE TELEMETRY"}
+                    : "INDEX A SOURCE TO INITIATE TELEMETRY"}
                 </p>
               </div>
             </div>
@@ -118,7 +119,7 @@ export function DashboardHeader({
               <Input
                 value={search}
                 onChange={(e) => onSearchChange(e.target.value)}
-                placeholder="Filter repositories..."
+                placeholder="Filter indexed sources..."
                 className="h-8 rounded-[2px] border-input bg-card pl-9 font-mono text-xs sm:h-9"
               />
             </div>
@@ -144,13 +145,13 @@ export function DashboardHeader({
         <div className="no-scrollbar flex items-center justify-between gap-4 overflow-x-auto pb-0.5">
           <div className="flex shrink-0 items-center gap-1.5">
             <span className="mr-1 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
-              Scope
+              Type
             </span>
-            {visibilityFilters.map((filter) => (
+            {sourceTypeFilters.map((filter) => (
               <FilterPill
                 key={filter.value}
-                active={visibility === filter.value}
-                onClick={() => onVisibilityChange(filter.value)}
+                active={sourceFilter === filter.value}
+                onClick={() => onSourceFilterChange(filter.value)}
               >
                 {filter.label}
               </FilterPill>
