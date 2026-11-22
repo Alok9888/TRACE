@@ -4,6 +4,24 @@ import type { ChatConfig } from "@/lib/chat-config";
 const RESPONSE_TIMEOUT_MS = 20_000;
 const STREAM_IDLE_TIMEOUT_MS = 25_000; // Matches backend retrieval + TTFT budget; backend also sends 4s keepalives
 
+let streamOriginWarmed = false;
+
+/**
+ * Establishes DNS + TCP + TLS 1.3 to the direct streaming backend origin ahead of the first chat prompt,
+ * eliminating cold connection setup from the first-token critical path.
+ */
+export function warmUpStreamOrigin(): void {
+  if (typeof window === "undefined" || streamOriginWarmed) return;
+  streamOriginWarmed = true;
+  void fetch(`${getStreamBaseUrl()}/api/health`, {
+    method: "GET",
+    mode: "cors",
+    cache: "no-store",
+  }).catch(() => {
+    streamOriginWarmed = false;
+  });
+}
+
 export type StreamChatHandlers = {
   onUserMessage?: (message: ChatMessage) => void;
   onToken?: (token: string) => void;
@@ -50,8 +68,9 @@ export async function streamChatMessage(
       timedOut = "response";
       controller.abort();
     }, RESPONSE_TIMEOUT_MS);
+    // Fixed URL path so browsers cache a single CORS OPTIONS preflight across all chat sessions
     const res = await fetch(
-      `${getStreamBaseUrl()}/api/chat/sessions/${sessionId}/messages`,
+      `${getStreamBaseUrl()}/api/chat/messages/stream`,
       {
         method: "POST",
         credentials: "include",
@@ -63,6 +82,7 @@ export async function streamChatMessage(
         body: JSON.stringify(
           handlers.config
             ? {
+                sessionId,
                 content,
                 temperature: handlers.config.temperature,
                 maxTokens: handlers.config.maxTokens,
@@ -70,7 +90,7 @@ export async function streamChatMessage(
                 similarityThreshold: handlers.config.similarityThreshold,
                 systemPrompt: handlers.config.systemPrompt.trim() || undefined,
               }
-            : { content }
+            : { sessionId, content }
         ),
         signal: controller.signal,
         cache: "no-store",

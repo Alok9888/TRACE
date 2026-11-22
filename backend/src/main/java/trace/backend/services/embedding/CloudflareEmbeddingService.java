@@ -110,6 +110,21 @@ public class CloudflareEmbeddingService implements EmbeddingModel {
                 MODEL_NAME, MODEL_DIMENSIONS, EMBEDDING_BATCH_SIZE, CLOUDFLARE_ACCOUNT_ID.length());
     }
 
+    /**
+     * Warms DNS + TCP + TLS 1.3 directly inside the shared HTTP/2 HttpClient pool used for live queries.
+     */
+    public void warmUpConnection() {
+        try {
+            HttpRequest req = HttpRequest.newBuilder()
+                    .uri(URI.create("https://api.cloudflare.com"))
+                    .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                    .timeout(Duration.ofSeconds(3))
+                    .build();
+            HTTP_CLIENT.send(req, HttpResponse.BodyHandlers.discarding());
+        } catch (Exception ignored) {
+        }
+    }
+
     public long getApiCallCount() {
         return apiCallCount.get();
     }

@@ -40,6 +40,7 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import reactor.core.publisher.Mono;
 
 import trace.backend.dto.ChatMessageResponse;
 import trace.backend.dto.CitationDto;
@@ -54,12 +55,14 @@ import lombok.extern.slf4j.Slf4j;
 public class ChatStreamHandler {
 
     private static final long EMBEDDING_TIMEOUT_SECONDS = 15;
+    private static final long FIRST_TOKEN_TIMEOUT_SECONDS = 6; // Fast-fail stalled/queued models before first token
     private static final long CHAT_TIMEOUT_SECONDS = 60;
     private static final long HEARTBEAT_INTERVAL_SECONDS = 4;
     private static final long QA_CACHE_TTL_MS = TimeUnit.MINUTES.toMillis(10);
     private static final int MAX_QA_CACHE_ENTRIES = 500;
     private static final long COOLDOWN_429_MS = TimeUnit.MINUTES.toMillis(5);
     private static final long COOLDOWN_503_MS = TimeUnit.SECONDS.toMillis(60);
+    private static final long COOLDOWN_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(60);
     private static final long COOLDOWN_404_MS = TimeUnit.MINUTES.toMillis(30);
 
     private static final ScheduledExecutorService HEARTBEAT_SCHEDULER =
@@ -134,13 +137,22 @@ public class ChatStreamHandler {
             UUID requestedSessionId,
             String question,
             Supplier<ChatStreamContext> contextSupplier) {
-        return stream(requestedSessionId, question, ChatGenerationConfig.defaults(), contextSupplier);
+        return stream(requestedSessionId, question, ChatGenerationConfig.defaults(), null, contextSupplier);
     }
 
     public SseEmitter stream(
             UUID requestedSessionId,
             String question,
             ChatGenerationConfig config,
+            Supplier<ChatStreamContext> contextSupplier) {
+        return stream(requestedSessionId, question, config, null, contextSupplier);
+    }
+
+    public SseEmitter stream(
+            UUID requestedSessionId,
+            String question,
+            ChatGenerationConfig config,
+            Supplier<ChatStreamContext> fastCacheSupplier,
             Supplier<ChatStreamContext> contextSupplier) {
 
         ChatGenerationConfig effectiveConfig = config != null ? config : ChatGenerationConfig.defaults();
@@ -177,7 +189,8 @@ public class ChatStreamHandler {
             log.info("{} [SSE] sending stream-open sessionId={}", now(), requestedSessionId);
             safeSend(emitter, sseLock, SseEmitter.event().comment("connected"));
             Future<?> task = chatExecutor.submit(() -> runChat(
-                    emitter, sseLock, terminalSent, stage, requestedSessionId, question, effectiveConfig, contextSupplier));
+                    emitter, sseLock, terminalSent, stage, requestedSessionId, question,
+                    effectiveConfig, fastCacheSupplier, contextSupplier));
             workerTask.set(task);
             if (cancelWorker.get()) {
                 cancelTask(task);
@@ -197,10 +210,16 @@ public class ChatStreamHandler {
             UUID requestedSessionId,
             String question,
             ChatGenerationConfig config,
+            Supplier<ChatStreamContext> fastCacheSupplier,
             Supplier<ChatStreamContext> contextSupplier) {
         UUID sessionId = requestedSessionId;
         long requestStartMs = System.currentTimeMillis();
         AtomicBoolean anyTokenSent = new AtomicBoolean(false);
+        UUID userMessageId = UUID.randomUUID();
+        Instant userCreatedAt = Instant.now();
+        boolean userMessageEmitted = false;
+        boolean userMessagePersisted = false;
+        Future<float[]> preEmbedFuture = null;
         ScheduledFuture<?> heartbeat = HEARTBEAT_SCHEDULER.scheduleAtFixedRate(() -> {
             if (terminalSent.get() || anyTokenSent.get()) {
                 return;
@@ -214,15 +233,21 @@ public class ChatStreamHandler {
 
         try {
             stage.set("SESSION");
-            ChatStreamContext streamContext = contextSupplier.get();
+            ChatPromptBuilder.QueryTier queryTier = chatPromptBuilder.classifyQuery(question);
+
+            // Fast-path: check in-memory ChatContextCache first (0ms).
+            // On cache miss, overlap Neon session lookup with Cloudflare query embedding in parallel!
+            ChatStreamContext streamContext = fastCacheSupplier != null ? fastCacheSupplier.get() : null;
+            if (streamContext == null) {
+                if (queryTier != ChatPromptBuilder.QueryTier.TRIVIAL) {
+                    preEmbedFuture = ragExecutor.submit(() -> codeContextRetriever.embedQuery(question));
+                }
+                streamContext = contextSupplier.get();
+            }
             long sessionMs = System.currentTimeMillis() - requestStartMs;
             sessionId = streamContext.sessionId();
             UUID finalSessionId = sessionId;
 
-            ChatPromptBuilder.QueryTier queryTier = chatPromptBuilder.classifyQuery(question);
-
-            UUID userMessageId = UUID.randomUUID();
-            Instant userCreatedAt = Instant.now();
             ChatMessageResponse userResponse = new ChatMessageResponse(
                     userMessageId, MessageRole.USER, question, List.of(), userCreatedAt);
 
@@ -231,6 +256,8 @@ public class ChatStreamHandler {
                     streamContext.repositoryId(), streamContext.repositoryVersion(), question, config);
             CachedQaAnswer cachedAnswer = getCachedQaAnswer(qaCacheKey);
             if (cachedAnswer != null) {
+                cancelTask(preEmbedFuture);
+                preEmbedFuture = null;
                 log.info("{} [CHAT] qaCacheHit=true tier={} sessionId={} repo={} savedEmbedAndLlm=true latencyMs={}",
                         now(), queryTier, sessionId, streamContext.repositoryId(), System.currentTimeMillis() - requestStartMs);
                 heartbeat.cancel(false);
@@ -240,6 +267,7 @@ public class ChatStreamHandler {
 
                 // Emit all SSE events immediately and persist both rows in one async batched JDBC call
                 safeSend(emitter, sseLock, SseEmitter.event().name("user_message").data(userResponse));
+                userMessageEmitted = true;
                 anyTokenSent.set(true);
                 safeSend(emitter, sseLock, SseEmitter.event().name("token").data(cachedAnswer.answer));
                 safeSend(emitter, sseLock, SseEmitter.event().name("model").data(Map.of(
@@ -252,6 +280,7 @@ public class ChatStreamHandler {
                                 cachedAnswer.citations, assistantCreatedAt)));
                 sendDone(emitter, sseLock, terminalSent, sessionId);
 
+                userMessagePersisted = true;
                 persistMessagesAsync(List.of(
                         new PendingMessage(userMessageId, finalSessionId, MessageRole.USER, question, null, userCreatedAt),
                         new PendingMessage(assistantId, finalSessionId, MessageRole.ASSISTANT, cachedAnswer.answer, citationsJson, assistantCreatedAt)
@@ -259,15 +288,16 @@ public class ChatStreamHandler {
                 return;
             }
 
-            // Emit user_message immediately and persist it in the background while RAG retrieval runs in parallel
-            persistMessagesAsync(List.of(
-                    new PendingMessage(userMessageId, finalSessionId, MessageRole.USER, question, null, userCreatedAt)
-            ));
+            // Emit user_message immediately; defer DB INSERT until post-stream batch write
+            // so we don't contend for HikariCP connections or Neon I/O during RAG vector retrieval.
             safeSend(emitter, sseLock, SseEmitter.event().name("user_message").data(userResponse));
+            userMessageEmitted = true;
 
             long ragStartMs = System.currentTimeMillis();
             RetrievedContext retrievedContext;
             if (queryTier == ChatPromptBuilder.QueryTier.TRIVIAL) {
+                cancelTask(preEmbedFuture);
+                preEmbedFuture = null;
                 // Skip Cloudflare embedding + PgVector round-trip for simple greetings/acknowledgements
                 retrievedContext = new RetrievedContext(List.of(), "");
             } else {
@@ -284,13 +314,29 @@ public class ChatStreamHandler {
                         ? Math.min(10_000, Math.max(tierContextChars, topK * 950))
                         : tierContextChars;
                 double similarityThreshold = config.similarityThreshold();
-                log.info("{} [EMBED] start tier={} topK={} maxChars={} threshold={} sessionId={}",
-                        now(), queryTier, topK, maxContextChars, similarityThreshold, sessionId);
+                log.info("{} [EMBED] start tier={} topK={} maxChars={} threshold={} sessionId={} preEmbedded={}",
+                        now(), queryTier, topK, maxContextChars, similarityThreshold, sessionId, preEmbedFuture != null);
+
+                float[] precomputedVector = null;
+                if (preEmbedFuture != null) {
+                    try {
+                        precomputedVector = preEmbedFuture.get(EMBEDDING_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                    } catch (Exception embedErr) {
+                        preEmbedFuture.cancel(true);
+                        log.warn("{} [EMBED] parallel pre-embed failed, will retry inline: {}", now(), embedErr.getMessage());
+                    } finally {
+                        preEmbedFuture = null;
+                    }
+                }
+
+                final float[] finalPrecomputed = precomputedVector;
+                final ChatStreamContext finalCtx = streamContext;
                 Future<RetrievedContext> retrieval = ragExecutor.submit(
                         () -> codeContextRetriever.retrieve(
-                                streamContext.userId(),
-                                streamContext.repositoryId(),
+                                finalCtx.userId(),
+                                finalCtx.repositoryId(),
                                 question,
+                                finalPrecomputed,
                                 topK,
                                 maxContextChars,
                                 similarityThreshold));
@@ -376,7 +422,10 @@ public class ChatStreamHandler {
                             .user(prompt)
                             .stream()
                             .content()
-                            .timeout(Duration.ofSeconds(CHAT_TIMEOUT_SECONDS))
+                            // Fast-fail if first token stalls >6s so queued models fail over rapidly; generous per-token timeout thereafter
+                            .timeout(
+                                    Mono.delay(Duration.ofSeconds(FIRST_TOKEN_TIMEOUT_SECONDS)),
+                                    item -> Mono.delay(Duration.ofSeconds(CHAT_TIMEOUT_SECONDS)))
                             .doOnNext(token -> emitToken(
                                     emitter, sseLock, heartbeat, fullReply, anyTokenSent, tokenCount, firstTokenMs,
                                     noRelevantCode, finalSessionId, requestStartMs, token))
@@ -397,12 +446,17 @@ public class ChatStreamHandler {
                     }
                     lastModelError = unwrap(modelError);
                     int status = httpStatus(lastModelError);
-                    log.warn("{} [AI] provider=Groq model={} failed status={} sessionId={}", now(), model, status, sessionId, modelError);
+                    boolean isTimeout = lastModelError instanceof TimeoutException
+                            || modelError.getCause() instanceof TimeoutException;
+                    log.warn("{} [AI] provider=Groq model={} failed status={} timeout={} sessionId={}",
+                            now(), model, status, isTimeout, sessionId, modelError);
                     if (status == 401) {
                         log.error("{} [AI] provider=Groq fatal 401 model={} - not trying fallback", now(), model);
                         throw new ProviderStreamException("GROQ_FATAL", model, triedModels, errorMessage(lastModelError), null, 0, lastModelError);
                     }
-                    if (status == 429) {
+                    if (isTimeout) {
+                        putModelCooldown(model, COOLDOWN_TIMEOUT_MS);
+                    } else if (status == 429) {
                         sawQuotaFailure = true;
                         putModelCooldown(model, COOLDOWN_429_MS);
                     } else if (status == 503) {
@@ -419,14 +473,16 @@ public class ChatStreamHandler {
                 try {
                     String geminiModel = "gemini-2.5-flash";
                     triedModels.add(geminiModel);
-                    log.info("{} [AI] provider=Gemini model={} temp={} maxTokens={} last-resort fallback sessionId={} estInputTokens={}",
+                    log.info("{} [AI] provider=Gemini model={} temp={} maxTokens={} thinkingBudget=0 last-resort fallback sessionId={} estInputTokens={}",
                             now(), geminiModel, targetTemperature, targetMaxTokens, sessionId, estInputTokens);
                     long aiStartMs = System.currentTimeMillis();
 
                     GoogleGenAiChatOptions.Builder geminiOptions = GoogleGenAiChatOptions.builder()
                             .model(geminiModel)
                             .temperature(targetTemperature)
-                            .maxOutputTokens(targetMaxTokens);
+                            .maxOutputTokens(targetMaxTokens)
+                            // Disable Gemini 2.5 Flash silent thinking so TTFT drops from 2-8s to ~300-500ms
+                            .thinkingBudget(0);
 
                     geminiFallbackChatClient.prompt()
                             .options(geminiOptions)
@@ -495,11 +551,21 @@ public class ChatStreamHandler {
                             finalCitations, assistantCreatedAt)));
             sendDone(emitter, sseLock, terminalSent, sessionId);
 
-            // Persist assistant reply asynchronously after closing the SSE stream so DB latency adds 0ms to user UX
+            // Persist both user + assistant messages in ONE async batched JDBC call after closing SSE
+            // so Neon writes add 0ms to RAG retrieval and 0ms to user UX.
+            userMessagePersisted = true;
             persistMessagesAsync(List.of(
+                    new PendingMessage(userMessageId, finalSessionId, MessageRole.USER, question, null, userCreatedAt),
                     new PendingMessage(assistantId, finalSessionId, MessageRole.ASSISTANT, finalReplyText, citationsJson, assistantCreatedAt)
             ));
         } catch (Exception error) {
+            cancelTask(preEmbedFuture);
+            if (userMessageEmitted && !userMessagePersisted && sessionId != null) {
+                UUID persistSessionId = sessionId;
+                persistMessagesAsync(List.of(
+                        new PendingMessage(userMessageId, persistSessionId, MessageRole.USER, question, null, userCreatedAt)
+                ));
+            }
             Throwable cause = error instanceof ExecutionException && error.getCause() != null
                     ? error.getCause() : error;
             log.error("{} [{}] error sessionId={} type={}", now(), stage.get(), sessionId,
@@ -510,6 +576,7 @@ public class ChatStreamHandler {
                 sendError(emitter, sseLock, terminalSent, errorMessage(cause));
             }
         } finally {
+            cancelTask(preEmbedFuture);
             heartbeat.cancel(false);
             if (!terminalSent.get()) {
                 sendError(emitter, sseLock, terminalSent, "Chat ended without a terminal event. Please try again.");

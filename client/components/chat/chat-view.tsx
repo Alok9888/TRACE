@@ -23,8 +23,13 @@ import {
   saveChatConfig,
   type ChatConfig,
 } from "@/lib/chat-config";
+import { warmUpStreamOrigin } from "@/lib/stream-chat";
 
 export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: string }) {
+  // Pre-warm DNS/TCP/TLS to the direct streaming origin before the user sends their first prompt
+  useEffect(() => {
+    warmUpStreamOrigin();
+  }, []);
   const routeRepoId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(repoId)
     ? repoId
     : null;

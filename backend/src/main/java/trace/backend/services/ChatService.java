@@ -64,6 +64,19 @@ public class ChatService {
                 .title(title)
                 .build();
         session = chatSessionRepository.save(session);
+
+        // Pre-populate ChatContextCache immediately so the first message skips a redundant Neon DB round-trip
+        String repoVersion = repo.getTreeSha() != null && !repo.getTreeSha().isBlank()
+                ? repo.getTreeSha()
+                : (repo.getIndexedAt() != null ? repo.getIndexedAt().toString() : "v0");
+        chatContextCache.put(userId, session.getId(), new ChatStreamContext(
+                userId,
+                session.getId(),
+                repo.getId(),
+                repo.getFullName(),
+                repoVersion,
+                repo.effectiveSourceType()));
+
         return toSessionResponse(session);
     }
 
@@ -102,7 +115,11 @@ public class ChatService {
             ChatGenerationConfig config) {
         // Keep all database work inside the managed SSE task. Returning the emitter first
         // ensures lookup or pool delays cannot prevent the response from opening.
-        return chatStreamHandler.stream(sessionId, userContent, config,
+        return chatStreamHandler.stream(
+                sessionId,
+                userContent,
+                config,
+                () -> chatContextCache.get(userId, sessionId),
                 () -> prepareStreamContext(userId, sessionId));
     }
 

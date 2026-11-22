@@ -75,10 +75,11 @@ public class EmbeddingConfig {
     @Bean
     ApplicationRunner vectorIndexInitializer(
             JdbcTemplate jdbcTemplate,
+            EmbeddingModel embeddingModel,
             @Qualifier("ioExecutor") Executor ioExecutor) {
         return args -> {
             ioExecutor.execute(() -> ensureVectorIndexes(jdbcTemplate));
-            ioExecutor.execute(() -> warmUpExternalConnections(jdbcTemplate));
+            ioExecutor.execute(() -> warmUpExternalConnections(jdbcTemplate, embeddingModel));
         };
     }
 
@@ -106,29 +107,30 @@ public class EmbeddingConfig {
     }
 
     /**
-     * Warms up HikariCP Neon connections and DNS/TLS 1.3 pools for Cloudflare & Groq at startup
-     * so the very first user chat message avoids cold-connection handshake penalties.
+     * Warms up HikariCP Neon connections and the actual shared HTTP/2 connection pool inside
+     * {@link CloudflareEmbeddingService} (plus Groq DNS/TLS) so the first chat query avoids cold handshakes.
      */
-    private void warmUpExternalConnections(JdbcTemplate jdbcTemplate) {
+    private void warmUpExternalConnections(JdbcTemplate jdbcTemplate, EmbeddingModel embeddingModel) {
         try {
             jdbcTemplate.queryForObject("SELECT 1", Integer.class);
         } catch (Exception ignored) {
         }
-        HttpClient client = HttpClient.newBuilder()
-                .version(HttpClient.Version.HTTP_2)
-                .connectTimeout(Duration.ofSeconds(3))
-                .build();
-        for (String url : new String[]{"https://api.cloudflare.com", "https://api.groq.com"}) {
-            try {
-                HttpRequest req = HttpRequest.newBuilder()
-                        .uri(URI.create(url))
-                        .method("HEAD", HttpRequest.BodyPublishers.noBody())
-                        .timeout(Duration.ofSeconds(3))
-                        .build();
-                client.send(req, HttpResponse.BodyHandlers.discarding());
-            } catch (Exception ignored) {
-            }
+        if (embeddingModel instanceof CloudflareEmbeddingService cf) {
+            cf.warmUpConnection();
         }
-        log.debug("Completed startup connection warmup for Neon, Cloudflare, and Groq");
+        try {
+            HttpClient groqWarmup = HttpClient.newBuilder()
+                    .version(HttpClient.Version.HTTP_2)
+                    .connectTimeout(Duration.ofSeconds(3))
+                    .build();
+            HttpRequest req = HttpRequest.newBuilder()
+                    .uri(URI.create("https://api.groq.com"))
+                    .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                    .timeout(Duration.ofSeconds(3))
+                    .build();
+            groqWarmup.send(req, HttpResponse.BodyHandlers.discarding());
+        } catch (Exception ignored) {
+        }
+        log.debug("Completed startup connection warmup for Neon, Cloudflare HTTP/2 pool, and Groq");
     }
 }

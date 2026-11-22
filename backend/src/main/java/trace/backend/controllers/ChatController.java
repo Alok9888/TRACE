@@ -20,6 +20,7 @@ import trace.backend.dto.ChatMessageResponse;
 import trace.backend.dto.ChatSessionResponse;
 import trace.backend.dto.CreateChatSessionRequest;
 import trace.backend.config.WorkspaceContext;
+import trace.backend.exceptions.BadRequestException;
 import trace.backend.services.ChatService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -53,11 +54,29 @@ public class ChatController {
             @PathVariable UUID id,
             @Valid @RequestBody ChatMessageRequest request,
             HttpServletResponse response) {
+        return openStream(id, request, response);
+    }
+
+    /**
+     * Fixed-path SSE streaming endpoint so browsers cache a single CORS OPTIONS preflight
+     * across all chat sessions instead of repeating a preflight RTT for every new session UUID.
+     */
+    @PostMapping(value = "/messages/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter streamMessage(
+            @Valid @RequestBody ChatMessageRequest request,
+            HttpServletResponse response) {
+        if (request.sessionId() == null) {
+            throw new BadRequestException("sessionId is required");
+        }
+        return openStream(request.sessionId(), request, response);
+    }
+
+    private SseEmitter openStream(UUID sessionId, ChatMessageRequest request, HttpServletResponse response) {
         response.setHeader("Cache-Control", "no-cache, no-transform");
         response.setHeader("X-Accel-Buffering", "no");
         return chatService.streamReply(
                 workspaceContext.getWorkspaceId(),
-                id,
+                sessionId,
                 request.content(),
                 request.toGenerationConfig());
     }

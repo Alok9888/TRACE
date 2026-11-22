@@ -37,6 +37,7 @@ import {
 import { ModeToggle } from "@/components/ui/mode-toggle";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import { warmUpStreamOrigin } from "@/lib/stream-chat";
 
 const CHAPTERS = [
   { id: "hero", num: "01", label: "Launch" },
@@ -153,9 +154,10 @@ export default function HomePage() {
   const reducedMotion = usePrefersReducedMotion();
   const router = useRouter();
 
-  // Wake a sleeping Render backend while the user is exploring or pasting a GitHub URL
+  // Wake a sleeping Render backend & warm direct stream origin while user is on landing page
   useEffect(() => {
     void fetch("/backend/api/health", { cache: "no-store" }).catch(() => {});
+    warmUpStreamOrigin();
   }, []);
 
   // Continuous 60fps scroll-driven telemetry: progress rail, parallax depth, and 3-beat scrollytelling
@@ -632,7 +634,7 @@ export default function HomePage() {
             <div className="mission-grid absolute inset-0 opacity-40" />
           </div>
 
-          <div className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col justify-between px-4 py-6 sm:px-6 sm:py-10 md:py-12">
+          <div className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col justify-between gap-5 px-4 py-5 sm:gap-7 sm:px-6 sm:py-7 md:py-9">
             <Reveal visible={revealed[2]} className="space-y-1.5">
               <p className="font-mono text-[10px] tracking-[0.22em] text-muted-foreground uppercase">
                 02 // BENCHMARKS
@@ -646,7 +648,7 @@ export default function HomePage() {
             <div className="grid grid-cols-2 gap-3 sm:gap-5">
               {BENCHMARK_CARDS.map((card, idx) => (
                 <Reveal key={card.code} visible={revealed[2]} delay={70 + idx * 75}>
-                  <SpotlightCard className="group flex h-full flex-col justify-between border border-border/80 bg-card/70 p-4 sm:p-6">
+                  <SpotlightCard className="group flex h-full flex-col justify-between border border-border/80 bg-card/70 p-3.5 sm:p-5">
                     <div className="flex items-center justify-between gap-2 font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
                       <span>{card.label}</span>
                       <span className="tabular-telemetry line-through opacity-55">
@@ -654,8 +656,8 @@ export default function HomePage() {
                       </span>
                     </div>
 
-                    <div className="my-3 sm:my-5">
-                      <p className="font-heading text-3xl leading-none font-semibold tracking-[0.02em] text-foreground sm:text-5xl lg:text-6xl">
+                    <div className="my-2.5 sm:my-4">
+                      <p className="font-heading text-3xl leading-none font-semibold tracking-[0.02em] text-foreground sm:text-5xl lg:text-[3.25rem]">
                         <AnimatedNumber
                           from={card.from}
                           to={card.to}
@@ -723,7 +725,7 @@ export default function HomePage() {
             <div className="mission-grid absolute inset-0 opacity-35" />
           </div>
 
-          <div className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col justify-between px-4 py-6 sm:px-6 sm:py-10 md:py-12">
+          <div className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col justify-between gap-5 px-4 py-5 sm:gap-7 sm:px-6 sm:py-7 md:py-9">
             <Reveal visible={revealed[3]} className="space-y-1.5">
               <p className="font-mono text-[10px] tracking-[0.22em] text-muted-foreground uppercase">
                 03 // WHY TRACE

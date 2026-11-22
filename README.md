@@ -1,265 +1,165 @@
 # TRACE
 
-Paste a public GitHub repository URL, index its source tree into vector space, and interrogate the codebase with line-level citations.
+Ask questions against any public GitHub repository or PDF and get answers tied back to exact file lines or page numbers.
 
-TRACE started as a standard RAG-over-GitHub prototype and turned into an exercise in squeezing real latency, throughput, and memory efficiency out of a constrained stack: a **160 MB JVM heap** on Render, **Neon Postgres + `pgvector`**, **Cloudflare Workers AI** for 384-dim embeddings, **Groq** (with **Gemini 2.5 Flash** fallback) for streaming inference, and a **Next.js 16** monochrome interface.
+No login wall, no black-box prompt magic. You paste a repo URL or drop a PDF, watch it index live, and query it with the actual RAG parameters (temperature, max tokens, Top-K, similarity threshold, system prompt) exposed in the sidebar.
 
----
-
-## Why This Exists (and What Actually Broke Along the Way)
-
-Most code-RAG demos work fine on a 10-file toy repo and fall apart the moment you point them at a real codebase. Indexing takes minutes, embedding providers rate-limit you, filtered vector queries silently full-scan Postgres, and asking `"what port does the server use?"` triggers a 4-second pause followed by a five-section essay.
-
-Building TRACE meant hunting down each of those bottlenecks in production logs and fixing them at the architectural layer rather than throwing bigger hardware at the problem.
+I originally built TRACE as a quick GitHub RAG app and deployed it onto a free 512 MB Render container (`-Xmx160m` JVM heap) backed by Neon Postgres (`pgvector`), Cloudflare Workers AI, and Groq. Watching it actually run under those constraints is where the real engineering started.
 
 ---
 
-## System Architecture
+## Architecture
+
+Both source types share one vector store, one embedding pipeline, and one streaming RAG engine. Only source acquisition and chunking are isolated behind a `SourceIngestionAdapter` interface.
 
 ```mermaid
 flowchart LR
-  UI["Next.js 16 Client (React 19 + rAF SSE)"] -->|"JSON + SSE (/backend/*)"| API["Spring Boot 4 / Java 21 (Virtual Threads)"]
+  UI["Next.js 16 + React 19"]
 
-  subgraph Indexing["Indexing Pipeline"]
-    GH["GitHub Zipball / Raw CDN (HTTP/2)"]
-    Filter["Diff Filter + Line-Aware Chunker (1600 chars)"]
-    Batch["Cross-File 64-Chunk Batcher"]
+  subgraph Ingest["Isolated Ingestion Adapters"]
+    GH["GitHub Adapter: Zipball + Diff Filter + Line Chunker"]
+    PDF["PDF Adapter: PDFBox 3 + Header Strip + Page Chunker"]
   end
 
-  subgraph Retrieval["Chat & Adaptive RAG"]
-    Cache["ChatContextCache + Config-Aware Q&A LRU"]
-    Tier["4-Tier Query Router (TRIVIAL / SIMPLE / STANDARD / DEEP)"]
-    SQL["Direct Indexed SQL Vector Search"]
+  PERSIST["Shared VectorBatchPersister (64-chunk batches, 3x parallel)"]
+  CF["Cloudflare Workers AI (bge-small-en-v1.5, 384-dim)"]
+  PG[("Neon Postgres + pgvector (trace_vectors_cf_384)")]
+
+  subgraph Chat["Streaming RAG Path"]
+    CACHE["ChatContextCache + Q&A LRU"]
+    ROUTE["4-Tier Query Router"]
+    CTE["Direct CTE Vector Search"]
+    LLM["Groq (4 models, 6s TTFT failover) -> Gemini 2.5 Flash"]
   end
 
-  CF["Cloudflare Workers AI (@cf/baai/bge-small-en-v1.5, 384-dim)"]
-  PG[("PostgreSQL + pgvector (HNSW + B-Tree Expr Index)")]
-  GROQ["Groq Inference (4-Model Circuit Breaker)"]
-  GEM["Gemini 2.5 Flash (Last-Resort Fallback)"]
+  UI -->|"POST /api/repos/analyze"| GH --> PERSIST
+  UI -->|"POST /api/sources/pdf (direct XHR)"| PDF --> PERSIST
+  PERSIST --> CF --> PG
 
-  API --> GH --> Filter --> Batch --> CF --> PG
-  API --> Cache --> Tier --> SQL
-  SQL --> CF
-  SQL --> PG
-  Tier --> GROQ
-  GROQ -.->|"429 / 503 cooldown"| GEM
+  UI -->|"POST /api/chat/messages/stream (SSE)"| CACHE --> ROUTE --> CTE
+  CTE --> CF
+  CTE --> PG
+  ROUTE --> LLM -->|"60fps rAF SSE"| UI
 ```
 
 ---
 
-## Engineering Improvements & Benchmarks
+## Things That Actually Broke (and How I Fixed Them)
 
-Every row below came from profiling actual indexing runs and chat traces in this repository.
+Most RAG projects look fine on a 10-file repo and fall apart the moment you index something real or deploy on cheap hardware. These are the concrete problems I ran into and fixed in the codebase:
 
-| Area | Before | After | What Changed |
-|---|---|---|---|
-| **Embedding API round-trips (1,934 chunks)** | **108 calls** (`18–22` texts/call) | **31 calls** (`64` texts/call — **3.5× fewer**) | Replaced Spring AI's default `TokenCountBatchingStrategy` (8,191-token cap that fragmented 64-chunk batches) with a cross-file accumulator and fixed 64-doc `BatchingStrategy` |
-| **Re-indexing unchanged files** | Full re-fetch & re-embed | **0% unchanged files re-embedded** | Git tree SHA diffing (`indexed_files_json`) deletes only removed/modified file vectors and skips untouched blobs |
-| **Chunking overhead & vector count** | JTokkit BPE tokenization (~800-char chunks) | Single-pass line-boundary scanner (`1600` chars, **~50% fewer vectors**) | Eliminated BPE encoding CPU spikes while preserving exact `startLine`–`endLine` coordinates and `// File:` headers |
-| **Filtered vector search** | Spring AI `metadata::jsonb @@` cast + ANTLR filter parse | Direct parameterized SQL on B-tree expression index + HNSW cosine | Indexed `((metadata->>'repoId'), (metadata->>'userId'))` and fixed GIN index to `((metadata::jsonb) jsonb_path_ops)` since Spring AI creates `metadata` as `json` |
-| **Chat pre-RAG overhead** | Synchronous session/repo DB lookup + sync message writes | **0 ms** cache hit (`ChatContextCache`) + async JDBC batch writes | SSE stream opens immediately; user & assistant messages persist off the critical path via `reWriteBatchedInserts=true` |
-| **Time to first token (simple queries)** | Routed through reasoning models (`1–4s` hidden thinking) + 2–6s UI delay | Sub-second first token on `llama-3.1-8b-instant`; **0 ms** RAG on greetings | 4-tier query router skips RAG on trivial turns, prioritizes instant non-reasoning models, and removed artificial client-side stream pacing |
-| **JVM container stability (`-Xmx160m`)** | `ReservedCodeCacheSize=16m` + `ForkJoinPool.commonPool()` contention | `ReservedCodeCacheSize=48m` + Java 21 virtual-thread pools | Prevented JIT code-cache exhaustion and isolated GitHub, embedding, RAG, and chat I/O onto dedicated virtual-thread executors |
-| **Frontend streaming & slider latency** | React state update per SSE chunk; full tree re-renders | `requestAnimationFrame` token batching (**60 fps cap**) + ref-backed config | High-speed Groq streams never thrash DOM layout; dragging LLM/RAG parameter sliders never re-renders the chat feed |
+**1. Spring AI was silently shredding my embedding batches**
+I was sending 64 code chunks at a time to Cloudflare Workers AI, yet logs showed 108 API calls for 1,934 chunks (18 to 22 chunks per call). Spring AI's default `TokenCountBatchingStrategy` enforces an 8,191-token cap and re-splits batches behind the scenes. Replacing it with a count-based `fixedSizeBatches` strategy (`EmbeddingConfig.java`) and accumulating chunks across files dropped that same repo from **108 calls to 31** (3.5x fewer network round-trips).
 
----
+**2. JTokkit BPE chunking was burning CPU on a 160 MB heap**
+Token-splitting every file with BPE was slow and produced twice as many tiny chunks. I replaced it with a single-pass, line-boundary scanner (`CodeChunker.java`, 1,600 chars, 10% line-snapped overlap) that tracks exact `startLine`/`endLine` coordinates and prepends `// File: <path>` to every chunk. Half as many vectors, cleaner citations, no tokenizer overhead.
 
-## Inside the Two Pipelines
+**3. Filtered pgvector queries were doing way too much work**
+Spring AI's `VectorStore` filter expression runs ANTLR parsing and emits a `metadata::jsonb @@` predicate (and Spring AI creates `metadata` as `json`, not `jsonb`, so a plain GIN index wasn't even getting used). I added a B-tree expression index on `((metadata->>'repoId'), (metadata->>'userId'))` and wrote a direct parameterized CTE query (`CodeContextRetriever.java`):
+- Sends the 384-float vector literal **once** instead of 3 times over the WAN to Neon.
+- Ranks only `(id, dist)` first and joins back to fetch TOAST `content`/`metadata` only for the final `topK` rows.
 
-### 1. Indexing: From GitHub URL to HNSW Vectors
+**4. Re-indexing was re-embedding untouched code**
+Storing the filtered Git tree SHA and per-file blob SHAs (`indexed_files_json`) lets incremental re-indexing diff against the last run, delete vectors only for modified/removed paths, and skip unchanged files completely (**0% re-embed waste**).
 
-```mermaid
-sequenceDiagram
-  actor User
-  participant UI as Next.js Client
-  participant API as IndexingService
-  participant GH as GitHub API / Zipball
-  participant CF as Cloudflare Workers AI
-  participant DB as Postgres + pgvector
+**5. Chat TTFT had four hidden waterfalls**
+Tracing slow first tokens turned up four separate stalls before the LLM even started:
+- **Session lookup before embedding:** Pre-populating `ChatContextCache` right inside `createSession()` makes the first message a 0 ms hit; on cold misses, Neon session lookup and Cloudflare query embedding now run in parallel.
+- **Per-session CORS preflights:** Because SSE bypasses the Vercel proxy to talk directly to Render, having `{sessionId}` in the URL path forced a fresh `OPTIONS` preflight on every new chat. Moving `sessionId` into the JSON body at a fixed `/api/chat/messages/stream` path caches one preflight for an hour across all sessions.
+- **Silent thinking delays on fallback:** `gemini-2.5-flash` defaults to thinking mode (2 to 8 seconds of silence before token #1). Explicitly setting `thinkingBudget(0)` plus a 6-second first-token failover timeout on Groq models keeps TTFT tight even when `llama-3.3-70b-versatile` queues up.
+- **Mid-flight DB writes:** User and assistant messages now write together in one async JDBC `batchUpdate` *after* the SSE stream closes instead of competing for HikariCP connections during vector search.
 
-  User->>UI: Paste public GitHub URL
-  UI->>API: POST /api/repos/analyze
-  API-->>UI: 202 Accepted (starts background virtual-thread job)
-  API->>GH: Fetch Git tree + blob SHAs
-  API->>API: Diff SHAs, skip binaries/lockfiles/unchanged blobs
-  API->>GH: Stream zipball archive (HTTP/2 single pass)
-  API->>API: Line-aware chunking (1600 chars + file/line metadata)
-  loop Cross-file batches of 64 chunks
-    API->>CF: POST bge-small-en-v1.5 (HTTP/2 + gzip + streaming JsonParser)
-    CF-->>API: 64 x 384-dim float vectors
-    API->>DB: Batch upsert vectors + metadata
-  end
-  API->>DB: Mark READY + save file SHA manifest
-```
-
-A few details that ended up mattering more than expected:
-- **Cross-file batching (`EmbeddingConfig.fixedSizeBatches`)**: Small files often yield only 1–5 chunks. Accumulating chunks across files until the buffer reaches 64—and disabling Spring AI's token-count re-splitter—keeps every Cloudflare Workers AI request full.
-- **Zero-vector guard**: Transient embedding failures can silently poison a vector store with all-zero vectors. `CloudflareEmbeddingService` rejects zero vectors from both the LRU cache and persistence path.
-- **No blob bloat on status polls**: Polling `/api/repos/{id}/status` uses lightweight JPQL DTO projections and `@Modifying` single-column updates so Hibernate never loads or dirty-checks large `indexed_files_json` payloads on every poll tick.
+**6. Adding PDFs without duplicating the RAG stack**
+PDFs go into the exact same `repositories` table (via a `source_type` discriminator + nullable `file_name`, `file_size_bytes`, `page_count`, `storage_key` columns, with a reversible SQL migration in `backend/src/main/resources/db/migration_multi_source.sql`) and the exact same `trace_vectors_cf_384` vector table.
+- Uploads stream straight to the backend via XHR (avoiding Vercel's 4.5 MB rewrite body limit), verify `%PDF-` magic bytes, and spill to a temp file so a 20 MB upload never blows the 160 MB JVM heap.
+- `PdfTextExtractor` extracts page-by-page with Apache PDFBox 3, detects and strips repeated running headers/footers across pages, extracts section headings, and rejects scanned/image-only or encrypted PDFs cleanly instead of indexing garbage.
+- `PdfChunker` splits recursively (paragraphs → sentences → words) without crossing page boundaries so citations always point to a real page and section.
+- `ChatPromptBuilder` and the Console UI adapt to `sourceType` automatically: repos cite `filePath:line` with GitHub deep-links; PDFs cite `filename · Page N · Section` without leaking branch badges or GitHub controls.
 
 ---
 
-### 2. Retrieval & Adaptive Streaming
+## Exposed Controls, Not a Black Box
 
-```mermaid
-sequenceDiagram
-  actor User
-  participant UI as ChatView + Sidebar
-  participant API as ChatStreamHandler
-  participant RAG as CodeContextRetriever
-  participant DB as Postgres + pgvector
-  participant LLM as Groq / Gemini Fallback
+Most chat demos hide every RAG parameter behind hardcoded defaults. In TRACE, every session has a `Params` tab (and a single-row drawer on mobile) backed directly by server-side clamping in `ChatGenerationConfig.java`:
 
-  User->>UI: Question + live RAG/LLM params
-  UI->>API: POST /api/chat/sessions/{id}/messages (SSE)
-  API-->>UI: Open SSE stream immediately (4s keepalive heartbeats)
-  API->>API: ChatContextCache + config-aware Q&A LRU check
-  alt Cache hit
-    API-->>UI: Stream cached answer + citations immediately
-  else Cache miss
-    API->>API: Classify query (TRIVIAL / SIMPLE / STANDARD / DEEP)
-    opt Non-trivial query
-      API->>RAG: Embed query + direct SQL vector search (topK, threshold)
-      RAG->>DB: Filter by repoId/userId B-tree + cosine distance <= 1 - threshold
-      DB-->>RAG: Ranked chunks within character budget
-    end
-    API->>LLM: Stream with temperature, maxTokens, custom systemPrompt
-    loop Tokens
-      LLM-->>API: Token chunk
-      API-->>UI: SSE token event (batched via rAF at 60fps)
-    end
-    API-->>UI: model, assistant_message (with citations), done
-    API->>DB: Async JDBC batch insert (user + assistant messages)
-  end
-```
+- **Temperature** (`0.0` – `1.0`, default `0.2`)
+- **Max Tokens** (`256` – `4096`, default `1024`; default mode respects 4-tier adaptive caps of `280` / `600` / `1024`)
+- **Top-K Chunks** (`1` – `10`, default `5`, dynamically scales context char budget)
+- **Similarity Threshold** (`0.0` – `1.0`, default `0.35`, enforced directly in pgvector SQL)
+- **System Prompt** (up to 1,200 chars, folded into the Q&A cache key so changing any knob invalidates stale answers immediately)
 
-- **Adaptive response sizing**: Short lookups (`"where is CORS configured?"`) get 1–3 plain sentences with inline citations instead of a markdown wall. Architectural traces (`"walk through the end-to-end indexing flow"`) automatically scale up context budget, token cap, and structured sections.
-- **Per-model circuit breaker**: When a Groq model returns `429` (5 min cooldown), `503` (60s cooldown), or `404` (30 min cooldown), `ChatStreamHandler` skips it cleanly on subsequent requests without wasting latency retrying a dead model, stepping down across 4 Groq models and finally to `gemini-2.5-flash`.
+On the frontend, parameters live in a ref so dragging sliders never re-renders the chat feed, and high-speed Groq SSE streams are batched through `requestAnimationFrame` (60 fps cap) so markdown/code rendering never locks the main thread.
 
 ---
 
-## Live LLM & Retrieval Controls
+## Stack
 
-Every chat session exposes real backend-enforced controls directly in the sidebar (and in a collapsible single-row drawer on mobile), persisted in `localStorage` and sent per message with zero extra round-trips. Changing any parameter automatically scopes the Q&A cache key so you immediately see the effect of your new settings.
-
-| Parameter | Range | Default | Backend Behavior |
-|---|---|---|---|
-| **Temperature** | `0.00` – `1.00` | `0.20` | Passed directly to Groq (`OpenAiChatOptions`) and Gemini fallback (`GoogleGenAiChatOptions`) |
-| **Max Tokens** | `256` – `4096` | `1024` | Default preserves adaptive per-tier caps (`280` / `600` / `1024`); custom values apply directly |
-| **Top K Chunks** | `1` – `10` | `5` | Sets SQL `LIMIT` and dynamically expands the context character budget so high `topK` values aren't truncated |
-| **Similarity Threshold** | `0.00` – `1.00` | `0.35` | Enforced directly in pgvector SQL (`(embedding <=> ?::vector) <= 1 - threshold`) and post-filter |
-| **System Prompt** | Up to `1200` chars | `"Answer from repo code only."` | Injected into `ChatPromptBuilder` to control grounding strictness or tone (e.g. `"Explain like a senior engineer"`) |
-
----
-
-## Tech Stack
-
-| Layer | Choices |
-|---|---|
-| **Frontend** | Next.js 16 (App Router, Turbopack), React 19, TypeScript, Tailwind CSS v4, TanStack Query, Base UI, self-hosted `Barlow` / `Inter` / `JetBrains Mono` (`next/font/local`) |
-| **Backend** | Java 21 (Virtual Threads), Spring Boot 4.1, Spring AI 2.0, HikariCP, JDBC batching |
-| **Database & Vectors** | PostgreSQL 16 (Neon in production) + `pgvector` (`384`-dim HNSW cosine index + B-tree metadata expression index) |
-| **Embeddings** | Cloudflare Workers AI (`@cf/baai/bge-small-en-v1.5`, 384-dim, HTTP/2) |
-| **Inference** | Groq (`llama-3.1-8b-instant`, `llama-3.3-70b-versatile`, `openai/gpt-oss-20b`, `openai/gpt-oss-120b`) + Google Gemini (`gemini-2.5-flash`) fallback |
+- **Backend:** Java 21 (Virtual Threads), Spring Boot 4.1, Spring AI 2.0, Apache PDFBox 3.0, HikariCP, JDBC batching
+- **Database:** PostgreSQL 16 (Neon) + `pgvector` (`384`-dim HNSW cosine + B-tree metadata expression index)
+- **Embeddings:** Cloudflare Workers AI (`@cf/baai/bge-small-en-v1.5`, 384-dim, HTTP/2, streaming Jackson parser, dual query/chunk LRU caches, zero-vector guard)
+- **Inference:** Groq (`llama-3.1-8b-instant`, `llama-3.3-70b-versatile`, `openai/gpt-oss-20b`, `openai/gpt-oss-120b`) + Gemini 2.5 Flash fallback (`thinkingBudget=0`)
+- **Frontend:** Next.js 16 (App Router, Turbopack), React 19, TypeScript, Tailwind CSS v4, TanStack Query v5, Base UI, self-hosted `Barlow` / `Inter` / `JetBrains Mono`
 
 ---
 
 ## Running Locally
 
-### Prerequisites
-- Java 21 JDK
-- Node.js 20+
-- Docker (for local Postgres + `pgvector`)
-- API keys for **Groq** and **Cloudflare Workers AI** (plus optional **Gemini** fallback and **GitHub** token for higher rate limits)
+You need Java 21, Node 20+, Docker, and API keys for **Groq** and **Cloudflare Workers AI** (plus optional **Gemini** and **GitHub** tokens).
 
-### 1. Clone and start PostgreSQL (`pgvector`)
+### 1. Start local Postgres + `pgvector`
 
 ```bash
-git clone https://github.com/Alok9888/trace.git
+git clone https://github.com/Alok9888/devpilot.git trace
 cd trace
 docker compose up -d
 ```
 
-This starts `pgvector/pgvector:pg16` on `localhost:5433` (`db=trace`, `user=postgres`, `password=postgres`).
+Starts `pgvector/pgvector:pg16` on `localhost:5433` (`db=trace`, `user=postgres`, `password=postgres`).
 
-### 2. Configure environment variables
+### 2. Set environment variables
 
-| Variable | Required | Purpose |
-|---|---|---|
-| `SPRING_DATASOURCE_URL` | Yes | JDBC URL (e.g. `jdbc:postgresql://localhost:5433/trace`) |
-| `SPRING_DATASOURCE_USERNAME` | Yes | Postgres user |
-| `SPRING_DATASOURCE_PASSWORD` | Yes | Postgres password |
-| `GROQ_API_KEY` | Yes | Primary chat inference (Groq OpenAI-compatible API) |
-| `CLOUDFLARE_ACCOUNT_ID` | Yes | Cloudflare Workers AI account ID for `bge-small-en-v1.5` |
-| `CLOUDFLARE_API_TOKEN` | Yes | Cloudflare Workers AI token |
-| `GOOGLE_GENAI_API_KEY` | Optional | Gemini 2.5 Flash last-resort fallback |
-| `GITHUB_TOKEN` | Optional | Raises GitHub API rate limits on large repos |
-| `APP_CORS_ALLOWED_ORIGINS` | Optional | Comma-separated allowed frontend origins (default `http://localhost:3000`) |
-| `NEXT_PUBLIC_API_BASE_URL` | Optional | Backend origin for Next.js `/backend/*` rewrites (set in `client/`) |
-
-### 3. Start the backend
+Required for the backend:
 
 ```bash
+SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5433/trace
+SPRING_DATASOURCE_USERNAME=postgres
+SPRING_DATASOURCE_PASSWORD=postgres
+GROQ_API_KEY=...
+CLOUDFLARE_API_TOKEN=...
+```
+
+Optional:
+- `GOOGLE_GENAI_API_KEY` — enables Gemini 2.5 Flash fallback when Groq hits quota/5xx
+- `GITHUB_TOKEN` — higher GitHub API rate limits on large repos
+- `APP_CORS_ALLOWED_ORIGINS` — defaults to `http://localhost:3000`
+- `NEXT_PUBLIC_API_BASE_URL` — set in `client/.env.local` (e.g. `http://localhost:8080`) for local SSE streaming & PDF uploads
+
+### 3. Run backend and frontend
+
+```bash
+# Terminal 1 — backend (use .\mvnw.cmd on Windows)
 cd backend
 ./mvnw spring-boot:run
-```
 
-On Windows PowerShell:
-
-```powershell
-cd backend
-.\mvnw.cmd spring-boot:run
-```
-
-### 4. Start the frontend
-
-```bash
+# Terminal 2 — frontend
 cd client
 npm install
 npm run dev
 ```
 
-Open `http://localhost:3000` and paste any public GitHub repository URL.
+Open `http://localhost:3000`, pick **GitHub Repo** or **PDF**, and start querying.
 
 ---
 
-## Project Layout
+## Tests
 
-```text
-trace/
-├── backend/
-│   ├── Dockerfile                              # Multi-stage Java 21 build tuned for -Xmx160m
-│   └── src/main/java/trace/backend/
-│       ├── config/                             # Virtual-thread executors, PgVector/HNSW setup, Gemini fallback
-│       ├── controllers/                        # REST + SSE endpoints (/api/repos, /api/chat)
-│       ├── dto/                                # Request/response records + parameter validation
-│       ├── services/
-│       │   ├── ai/                             # ChatStreamHandler, CodeContextRetriever, ChatPromptBuilder, ChatGenerationConfig
-│       │   ├── embedding/                      # CloudflareEmbeddingService (HTTP/2, LRU caches, zero-vector guard)
-│       │   ├── github/                         # Zipball + raw CDN client, rate limiter
-│       │   └── indexing/                       # Diff-aware IndexingService, line-aware CodeChunker
-│       └── repository/                         # JPA + lightweight DTO projections
-├── client/
-│   ├── app/                                    # Next.js App Router pages + self-hosted woff2 fonts
-│   ├── components/                             # Chat workspace, sidebar parameter controls, indexing telemetry, dashboard
-│   ├── hooks/                                  # React Query hooks + rAF-batched SSE stream hook
-│   └── lib/                                    # API client, SSE parser, ChatConfig storage/validation
-└── docker-compose.yml                          # Local PostgreSQL 16 + pgvector
-```
-
----
-
-## Verification & Tests
-
-Backend RAG invariants—file filtering, incremental vector deletion, 1,600-char line-aware chunking, zero-vector cache rejection, 64-chunk batch preservation, 4-tier query classification, and parameter clamping/retrieval overrides—are covered in [`RagOptimizationsTest.java`](backend/src/test/java/trace/backend/RagOptimizationsTest.java):
+Core RAG and PDF ingestion invariants live in `RagOptimizationsTest.java` (filtering, incremental deletion, 1,600-char line chunking, zero-vector rejection, 64-chunk batching, 4-tier query classification, parameter clamping) and `PdfIngestionTest.java` (multi-page PDF extraction, running header/footer stripping, scanned-PDF and invalid magic-header rejection, page-preserving chunking, end-to-end persistence, citation mapping, and source-aware prompting):
 
 ```bash
 cd backend
-./mvnw -Dtest=RagOptimizationsTest test
+./mvnw test -Dtest=RagOptimizationsTest,PdfIngestionTest
 ```
 
 ---
 
-## Author
-
-**Alok9888** — [github.com/Alok9888](https://github.com/Alok9888) · [Repository](https://github.com/Alok9888/trace)
+Built by **Aalok Shrivastav** — [github.com/Alok9888](https://github.com/Alok9888) · [alokshri571@gmail.com](mailto:alokshri571@gmail.com)

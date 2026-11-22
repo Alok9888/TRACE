@@ -44,18 +44,27 @@ public class CodeContextRetriever {
         return 384;
     }
 
+    /** Computes the query embedding directly when an EmbeddingModel bean is available (used for parallel pre-embedding). */
+    public float[] embedQuery(String question) {
+        if (embeddingModel == null || question == null || question.isBlank()) {
+            return null;
+        }
+        return embeddingModel.embed(question);
+    }
+
     public RetrievedContext retrieve(UUID userId, UUID repositoryId, String question) {
         return retrieve(
                 userId,
                 repositoryId,
                 question,
+                null,
                 RagSettings.TOP_K_CHUNKS,
                 RagSettings.MAX_CONTEXT_CHARS,
                 RagSettings.SIMILARITY_THRESHOLD);
     }
 
     public RetrievedContext retrieve(UUID userId, UUID repositoryId, String question, int topK, int maxContextChars) {
-        return retrieve(userId, repositoryId, question, topK, maxContextChars, RagSettings.SIMILARITY_THRESHOLD);
+        return retrieve(userId, repositoryId, question, null, topK, maxContextChars, RagSettings.SIMILARITY_THRESHOLD);
     }
 
     public RetrievedContext retrieve(
@@ -65,24 +74,39 @@ public class CodeContextRetriever {
             int topK,
             int maxContextChars,
             double similarityThreshold) {
+        return retrieve(userId, repositoryId, question, null, topK, maxContextChars, similarityThreshold);
+    }
+
+    public RetrievedContext retrieve(
+            UUID userId,
+            UUID repositoryId,
+            String question,
+            float[] precomputedEmbedding,
+            int topK,
+            int maxContextChars,
+            double similarityThreshold) {
         long startMs = System.currentTimeMillis();
         int effectiveTopK = Math.max(1, topK);
         int effectiveMaxChars = Math.max(400, maxContextChars);
         double effectiveThreshold = Math.max(0.0, Math.min(1.0, similarityThreshold));
 
-        log.info("{} [VECTOR] search start repo={} queryLength={} topK={} maxChars={} threshold={}",
-                Instant.now(), repositoryId, question.length(), effectiveTopK, effectiveMaxChars, effectiveThreshold);
+        log.info("{} [VECTOR] search start repo={} queryLength={} topK={} maxChars={} threshold={} preEmbedded={}",
+                Instant.now(), repositoryId, question.length(), effectiveTopK, effectiveMaxChars,
+                effectiveThreshold, precomputedEmbedding != null);
 
         List<Document> documents;
         String mode = "vector-store";
         long embedMs = 0L;
         long dbMs = 0L;
 
-        if (embeddingModel != null && jdbcTemplate != null) {
+        if ((precomputedEmbedding != null || embeddingModel != null) && jdbcTemplate != null) {
             try {
-                long embedStart = System.currentTimeMillis();
-                float[] queryVector = embeddingModel.embed(question);
-                embedMs = System.currentTimeMillis() - embedStart;
+                float[] queryVector = precomputedEmbedding;
+                if (queryVector == null) {
+                    long embedStart = System.currentTimeMillis();
+                    queryVector = embeddingModel.embed(question);
+                    embedMs = System.currentTimeMillis() - embedStart;
+                }
 
                 long dbStart = System.currentTimeMillis();
                 documents = directIndexedVectorSearch(userId, repositoryId, queryVector, effectiveTopK, effectiveThreshold);
@@ -151,7 +175,8 @@ public class CodeContextRetriever {
 
     /**
      * Queries PgVector directly using the B-tree expression index on ((metadata->>'repoId'), (metadata->>'userId')).
-     * Avoids Spring AI's `metadata::jsonb @@` cast across all rows and ANTLR filter parsing.
+     * Sends the 384-dim vector parameter ONCE via a CTE, ranks only (id, dist) first, and joins back
+     * so Postgres only fetches TOAST content/metadata for the final topK rows.
      */
     private List<Document> directIndexedVectorSearch(
             UUID userId,
@@ -163,13 +188,20 @@ public class CodeContextRetriever {
         double maxDistance = 1.0 - similarityThreshold;
         String table = (vectorTableName == null || vectorTableName.isBlank()) ? "trace_vectors_cf_384" : vectorTableName;
 
-        String sql = "SELECT content, metadata::text AS metadata_json, (1 - (embedding <=> ?::vector)) AS score "
-                + "FROM " + table + " "
-                + "WHERE (metadata->>'repoId') = ? "
-                + "  AND (metadata->>'userId') = ? "
-                + "  AND (embedding <=> ?::vector) <= ? "
-                + "ORDER BY embedding <=> ?::vector ASC "
-                + "LIMIT ?";
+        String sql = "WITH q AS (SELECT ?::vector AS v), "
+                + "ranked AS ( "
+                + "  SELECT id, (embedding <=> q.v) AS dist "
+                + "  FROM " + table + ", q "
+                + "  WHERE (metadata->>'repoId') = ? "
+                + "    AND (metadata->>'userId') = ? "
+                + "    AND (embedding <=> q.v) <= ? "
+                + "  ORDER BY dist ASC "
+                + "  LIMIT ? "
+                + ") "
+                + "SELECT t.content, t.metadata::text AS metadata_json, (1 - r.dist) AS score "
+                + "FROM ranked r "
+                + "JOIN " + table + " t ON t.id = r.id "
+                + "ORDER BY r.dist ASC";
 
         return jdbcTemplate.query(
                 sql,
@@ -187,9 +219,7 @@ public class CodeContextRetriever {
                 vectorLiteral,
                 repositoryId.toString(),
                 userId.toString(),
-                vectorLiteral,
                 maxDistance,
-                vectorLiteral,
                 topK);
     }
 
