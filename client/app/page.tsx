@@ -136,6 +136,8 @@ export default function HomePage() {
   const spineProgressRef = useRef<HTMLDivElement>(null);
   const heroBgRef = useRef<HTMLImageElement>(null);
   const orbitalBgRef = useRef<HTMLImageElement>(null);
+  const ascentBgRef = useRef<HTMLImageElement>(null);
+  const edgeBgRef = useRef<HTMLImageElement>(null);
   const earthBgRef = useRef<HTMLImageElement>(null);
 
   const chapterStopsRef = useRef<(HTMLElement | null)[]>([null, null, null, null, null]);
@@ -207,6 +209,14 @@ export default function HomePage() {
         if (orbitalBgRef.current) {
           const orbDelta = Math.min(1, Math.max(0, clampedBeatProgress));
           orbitalBgRef.current.style.transform = `translate3d(0, ${(orbDelta - 0.5) * -36}px, 0) scale(${1.05 + orbDelta * 0.06})`;
+        }
+        if (ascentBgRef.current) {
+          const benchOffset = (scrollTop - vh * (beatCount + 1)) / vh;
+          ascentBgRef.current.style.transform = `translate3d(0, ${benchOffset * -42}px, 0) scale(${1.05 + Math.abs(benchOffset) * 0.05})`;
+        }
+        if (edgeBgRef.current) {
+          const edgeOffset = (scrollTop - vh * (beatCount + 2)) / vh;
+          edgeBgRef.current.style.transform = `translate3d(0, ${edgeOffset * -38}px, 0) scale(${1.05 + Math.abs(edgeOffset) * 0.05})`;
         }
         if (earthBgRef.current) {
           const sigOffset = (scrollTop - vh * (beatCount + 3)) / vh;
@@ -544,7 +554,16 @@ export default function HomePage() {
           }}
           className="relative flex h-[100dvh] w-full snap-start snap-always flex-col overflow-hidden border-t border-border/60 pt-14"
         >
-          <div className="mission-grid pointer-events-none absolute inset-0 opacity-40" />
+          <div className="pointer-events-none absolute inset-0 overflow-hidden select-none">
+            <img
+              ref={ascentBgRef}
+              src="/images/falcon-ascent.jpg"
+              alt=""
+              aria-hidden="true"
+              className="h-full w-full scale-105 object-cover object-center opacity-[0.16] contrast-125 will-change-transform dark:opacity-[0.28] [mask-image:radial-gradient(ellipse_75%_75%_at_55%_50%,black_25%,transparent_100%)]"
+            />
+            <div className="mission-grid absolute inset-0 opacity-40" />
+          </div>
 
           <div className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col justify-between px-4 py-6 sm:px-6 sm:py-10 md:py-12">
             <Reveal visible={revealed[2]} className="space-y-1.5">
@@ -626,7 +645,16 @@ export default function HomePage() {
           }}
           className="relative flex h-[100dvh] w-full snap-start snap-always flex-col overflow-hidden border-t border-border/60 pt-14"
         >
-          <div className="mission-grid pointer-events-none absolute inset-0 opacity-35" />
+          <div className="pointer-events-none absolute inset-0 overflow-hidden select-none">
+            <img
+              ref={edgeBgRef}
+              src="/images/orbital-instrument.jpg"
+              alt=""
+              aria-hidden="true"
+              className="h-full w-full scale-105 object-cover object-[70%_30%] opacity-[0.12] contrast-125 will-change-transform dark:opacity-[0.17] [mask-image:radial-gradient(ellipse_75%_75%_at_75%_45%,black_15%,transparent_100%)]"
+            />
+            <div className="mission-grid absolute inset-0 opacity-35" />
+          </div>
 
           <div className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col justify-between px-4 py-6 sm:px-6 sm:py-10 md:py-12">
             <Reveal visible={revealed[3]} className="space-y-1.5">
@@ -726,7 +754,7 @@ export default function HomePage() {
               src="/images/earth-dark.jpg"
               alt=""
               aria-hidden="true"
-              className="h-full w-full scale-105 object-cover object-center opacity-[0.06] contrast-125 will-change-transform dark:opacity-[0.11] [mask-image:radial-gradient(ellipse_60%_60%_at_50%_55%,black_15%,transparent_100%)]"
+              className="h-full w-full scale-105 object-cover object-center opacity-[0.14] contrast-125 will-change-transform dark:opacity-[0.22] [mask-image:radial-gradient(ellipse_68%_65%_at_50%_55%,black_20%,transparent_100%)]"
             />
             <svg
               aria-hidden="true"

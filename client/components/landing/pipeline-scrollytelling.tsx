@@ -228,7 +228,7 @@ export function PipelineScrollytelling({
             src="/images/orbital-horizon.jpg"
             alt=""
             aria-hidden="true"
-            className="h-full w-full scale-105 object-cover object-center opacity-[0.07] contrast-125 will-change-transform dark:opacity-[0.12] [mask-image:radial-gradient(ellipse_75%_65%_at_50%_55%,black_15%,transparent_100%)]"
+            className="h-full w-full scale-105 object-cover object-center opacity-[0.14] contrast-125 will-change-transform dark:opacity-[0.22] [mask-image:radial-gradient(ellipse_80%_70%_at_55%_55%,black_20%,transparent_100%)]"
           />
           <div className="mission-grid absolute inset-0 opacity-45" />
         </div>
