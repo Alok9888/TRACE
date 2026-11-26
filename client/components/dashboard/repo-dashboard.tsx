@@ -54,7 +54,7 @@ export function RepoDashboard() {
         src="/images/earth-dark.jpg"
         alt=""
         aria-hidden="true"
-        className="pointer-events-none fixed right-0 bottom-0 z-0 h-[460px] w-[460px] object-contain opacity-[0.06] select-none dark:opacity-[0.11]"
+        className="pointer-events-none fixed right-0 bottom-0 z-0 h-64 w-64 object-contain opacity-[0.06] select-none sm:h-[460px] sm:w-[460px] dark:opacity-[0.11]"
       />
       <DashboardHeader
         search={search}
@@ -69,7 +69,7 @@ export function RepoDashboard() {
         isSyncing={refresh.isPending || reposQuery.isFetching}
       />
 
-      <div className="relative z-10 flex flex-1 flex-col gap-4 p-5 md:p-6">
+      <div className="relative z-10 flex flex-1 flex-col gap-4 p-4 sm:p-5 md:p-6">
         {reposQuery.isLoading && (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {Array.from({ length: 6 }).map((_, i) => (

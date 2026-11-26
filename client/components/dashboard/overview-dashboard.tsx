@@ -41,7 +41,7 @@ function StatCard({
             <CardDescription className="font-mono text-[10px] tracking-[0.18em] uppercase">
               {label}
             </CardDescription>
-            <CardTitle className="tabular-telemetry mt-2 font-heading text-3xl font-semibold tracking-tight">
+            <CardTitle className="tabular-telemetry mt-2 font-heading text-2xl font-semibold tracking-tight sm:text-3xl">
               {value}
             </CardTitle>
           </div>

@@ -63,7 +63,7 @@ export function CapabilitiesSection({
     <section
       id="capabilities"
       ref={sectionRef}
-      className="relative flex h-[100dvh] w-full snap-start snap-always flex-col overflow-hidden border-t border-border/60 pt-14"
+      className="relative flex min-h-[100dvh] w-full snap-start flex-col overflow-x-clip border-t border-border/60 pt-14 md:h-[100dvh] md:snap-always md:overflow-hidden"
     >
       <div className="pointer-events-none absolute inset-0 overflow-hidden select-none">
         <img
@@ -107,15 +107,15 @@ export function CapabilitiesSection({
             return (
               <Reveal key={card.code} visible={visible} delay={70 + idx * 65}>
                 <SpotlightCard className="group flex h-full flex-col justify-between border border-border/80 bg-card/75 p-3.5 backdrop-blur-sm sm:p-5">
-                  <div className="flex items-center justify-between gap-2 font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase">
-                    <span className="inline-flex items-center gap-2">
+                  <div className="flex min-w-0 items-center justify-between gap-2 font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase sm:tracking-[0.16em]">
+                    <span className="inline-flex shrink-0 items-center gap-2">
                       <Icon className="size-3.5 text-foreground/80" />
                       <span>{card.code}</span>
                     </span>
                     {"meta" in card ? (
-                      <span className="truncate opacity-75">{card.meta}</span>
+                      <span className="min-w-0 truncate text-right opacity-75">{card.meta}</span>
                     ) : (
-                      <span className="opacity-75">4 TOOLS</span>
+                      <span className="shrink-0 opacity-75">4 TOOLS</span>
                     )}
                   </div>
 

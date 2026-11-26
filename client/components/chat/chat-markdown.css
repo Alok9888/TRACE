@@ -1,3 +1,20 @@
+.chat-markdown {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.chat-markdown pre,
+.chat-markdown [data-streamdown="code-block"] {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.chat-markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 .chat-markdown [data-streamdown="heading-1"],
 .chat-markdown [data-streamdown="heading-2"],
 .chat-markdown [data-streamdown="heading-3"],

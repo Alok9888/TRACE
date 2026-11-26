@@ -139,10 +139,10 @@ export function AppShell({
 
       <SidebarInset className="bg-background">
         {!hideHeader && (
-          <header className="sticky top-0 z-20 flex h-13 shrink-0 items-center gap-2 border-b border-border bg-background/85 px-4 backdrop-blur-md">
-            <SidebarTrigger className="-ml-1" />
-            <Separator orientation="vertical" className="mr-2 h-4" />
-            <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+          <header className="sticky top-0 z-20 flex h-13 shrink-0 items-center gap-2 border-b border-border bg-background/85 px-3 backdrop-blur-md sm:px-4">
+            <SidebarTrigger className="-ml-1 shrink-0" />
+            <Separator orientation="vertical" className="mr-1 hidden h-4 sm:mr-2 sm:block" />
+            <div className="flex min-w-0 flex-1 items-center justify-between gap-2 sm:gap-3">
               <div className="min-w-0">
                 {title && (
                   <h1 className="truncate font-heading text-xs font-semibold tracking-[0.16em] uppercase">
@@ -175,12 +175,12 @@ export function BrandMark({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        "flex items-center gap-3 font-semibold tracking-tight",
+        "flex items-center gap-2 font-semibold tracking-tight sm:gap-3",
         className
       )}
     >
-      <TraceIcon className="size-7" />
-      <span className="font-heading text-sm font-semibold tracking-[0.24em] uppercase leading-none">
+      <TraceIcon className="size-6 sm:size-7" />
+      <span className="font-heading text-sm font-semibold tracking-[0.22em] uppercase leading-none sm:tracking-[0.24em]">
         TRACE
       </span>
     </div>

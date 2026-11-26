@@ -104,7 +104,7 @@ export function AddRepoDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="rounded-[2px] border-border bg-card sm:max-w-md">
+      <DialogContent className="max-h-[90dvh] w-[calc(100vw-1.5rem)] overflow-y-auto rounded-[2px] border-border bg-card p-4 sm:max-w-md sm:p-6">
         <DialogHeader>
           <DialogTitle className="font-heading text-sm font-semibold tracking-[0.16em] uppercase">
             Initiate Source Ingest
@@ -179,10 +179,13 @@ export function AddRepoDialog({
                   <Input
                     id="repo-url"
                     type="url"
+                    inputMode="url"
+                    autoCapitalize="none"
+                    autoCorrect="off"
                     placeholder="https://github.com/owner/repo"
                     value={repoUrl}
                     onChange={(e) => setRepoUrl(e.target.value)}
-                    className="h-10 rounded-[2px] border-input bg-background pl-9 font-mono text-xs"
+                    className="h-10 rounded-[2px] border-input bg-background pl-9 font-mono text-base placeholder:text-xs sm:text-xs"
                     required
                   />
                 </div>

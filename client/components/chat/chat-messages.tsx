@@ -83,7 +83,7 @@ const MessageRow = memo(function MessageRow({
         <span className="font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
           OPERATOR
         </span>
-        <div className="max-w-[85%] rounded-[2px] border border-foreground/25 bg-foreground/[0.06] px-4 py-2.5 text-sm leading-relaxed text-foreground">
+        <div className="max-w-[90%] break-words rounded-[2px] border border-foreground/25 bg-foreground/[0.06] px-3.5 py-2.5 text-sm leading-relaxed text-foreground sm:max-w-[85%] sm:px-4">
           <span className="whitespace-pre-wrap">{message.content}</span>
         </div>
       </div>
@@ -91,7 +91,7 @@ const MessageRow = memo(function MessageRow({
   }
 
   return (
-    <div className="group flex flex-col items-start gap-2">
+    <div className="group flex min-w-0 flex-col items-start gap-2">
       <div className="flex w-full items-center justify-between gap-2">
         <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
           <span className="size-1.5 rounded-full bg-foreground/75" />
@@ -107,7 +107,7 @@ const MessageRow = memo(function MessageRow({
           <span>{copied ? "Copied" : "Copy"}</span>
         </button>
       </div>
-      <div className="w-full border-l border-border pl-4">
+      <div className="w-full min-w-0 border-l border-border pl-3 sm:pl-4">
         <ChatMarkdown content={message.content} />
         {(message.citations?.length > 0 || message.responseModel?.fallback) && (
           <div className="mt-3 flex flex-col gap-2 border-t border-border/60 pt-2.5">
@@ -177,11 +177,11 @@ export function ChatMessages({
 
   return (
     <ScrollArea className="min-h-0 flex-1 overflow-hidden">
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 sm:gap-7 sm:px-5 sm:py-8">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-3 py-4 sm:gap-7 sm:px-5 sm:py-8">
         {messages.length === 0 && !streamText && (() => {
           const sourceConfig = STARTER_PROMPTS_BY_TYPE[effectiveSourceType(repo)];
           return (
-            <div className="space-y-5 border border-border bg-card/60 p-5 sm:p-7">
+            <div className="space-y-4 border border-border bg-card/60 p-4 sm:space-y-5 sm:p-7">
               <div className="space-y-1.5">
                 <p className="font-mono text-[10px] tracking-[0.2em] text-muted-foreground uppercase">
                   COMMS CHANNEL OPEN // {repo.fullName}
@@ -236,12 +236,12 @@ export function ChatMessages({
           )}
 
           {streamText && (
-            <div className="flex flex-col items-start gap-2">
+            <div className="flex min-w-0 flex-col items-start gap-2">
               <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
                 <span className="size-1.5 animate-pulse rounded-full bg-foreground" />
                 <span>TRACE // STREAMING</span>
               </div>
-              <div className="w-full border-l border-foreground/45 pl-4">
+              <div className="w-full min-w-0 border-l border-foreground/45 pl-3 sm:pl-4">
                 <ChatMarkdown content={streamText} isStreaming />
                 <span className="ml-1 inline-block h-3.5 w-1.5 animate-pulse bg-foreground align-middle" />
               </div>

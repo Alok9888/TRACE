@@ -255,13 +255,18 @@ export function ChatView({ repoId, initialUrl }: { repoId: string; initialUrl?: 
           : `${typeMeta.badge} // INGESTION SEQUENCE IN PROGRESS`
       }
       actions={
-        <Button variant="outline" size="sm" render={<Link href="/dashboard" />}>
+        <Button
+          variant="outline"
+          size="sm"
+          aria-label="Back to Console"
+          render={<Link href="/dashboard" />}
+        >
           <ArrowLeft data-icon="inline-start" />
-          Console
+          <span className="hidden sm:inline">Console</span>
         </Button>
       }
     >
-      <div className="flex h-[calc(100svh-3.25rem)] max-h-[calc(100svh-3.25rem)] min-h-0 flex-col overflow-hidden md:h-[calc(100svh-4.25rem)] md:max-h-[calc(100svh-4.25rem)] md:flex-row">
+      <div className="flex h-[calc(100dvh-3.25rem)] max-h-[calc(100dvh-3.25rem)] min-h-0 flex-col overflow-hidden md:h-[calc(100dvh-4.25rem)] md:max-h-[calc(100dvh-4.25rem)] md:flex-row">
         <ChatSidebar
           repo={sidebarRepo}
           sessionId={sessionId}

@@ -123,7 +123,7 @@ export function DashboardHeader({
                 value={search}
                 onChange={(e) => onSearchChange(e.target.value)}
                 placeholder="Filter indexed sources..."
-                className="h-8 rounded-[2px] border-input bg-card pl-9 font-mono text-xs sm:h-9"
+                className="h-9 rounded-[2px] border-input bg-card pl-9 font-mono text-base placeholder:text-xs sm:text-xs"
               />
             </div>
             <div className="hidden items-center gap-2 sm:flex">
@@ -145,9 +145,9 @@ export function DashboardHeader({
 
         <Separator className="opacity-60" />
 
-        <div className="no-scrollbar flex items-center justify-between gap-4 overflow-x-auto pb-0.5">
-          <div className="flex shrink-0 items-center gap-1.5">
-            <span className="mr-1 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between md:gap-4">
+          <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto pb-0.5">
+            <span className="mr-1 shrink-0 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
               Type
             </span>
             {sourceTypeFilters.map((filter) => (
@@ -161,8 +161,8 @@ export function DashboardHeader({
             ))}
           </div>
 
-          <div className="flex shrink-0 items-center gap-1.5">
-            <span className="mr-1 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
+          <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto pb-0.5">
+            <span className="mr-1 shrink-0 font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
               State
             </span>
             {statusFilters.map((filter) => (

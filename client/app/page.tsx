@@ -295,38 +295,52 @@ export default function HomePage() {
         progressBarRef.current.style.transform = `scaleX(${globalProgress})`;
       }
 
-      const nextChapter = Math.min(
-        CHAPTERS.length - 1,
-        Math.max(0, Math.round(scrollTop / vh))
-      );
+      const stops = chapterStopsRef.current;
+      const midpoint = scrollTop + vh * 0.45;
+      const revealLine = scrollTop + vh * 0.88;
+
+      let nextChapter = 0;
+      for (let i = 0; i < stops.length; i++) {
+        const el = stops[i];
+        if (el && el.offsetTop <= midpoint) {
+          nextChapter = i;
+        }
+      }
 
       setActiveChapter((prev) => (prev === nextChapter ? prev : nextChapter));
       setRevealed((prev) => {
-        if (prev[nextChapter]) return prev;
+        let changed = false;
         const copy = [...prev];
-        copy[nextChapter] = true;
-        return copy;
+        for (let i = 0; i < stops.length; i++) {
+          const el = stops[i];
+          if (!copy[i] && (i === nextChapter || (el && el.offsetTop <= revealLine))) {
+            copy[i] = true;
+            changed = true;
+          }
+        }
+        return changed ? copy : prev;
       });
 
       if (!reducedMotion) {
+        const stopTop = (index: number) => stops[index]?.offsetTop ?? vh * index;
         if (heroBgRef.current) {
-          const heroDelta = Math.min(1.2, Math.max(-0.5, scrollTop / vh));
+          const heroDelta = Math.min(1.2, Math.max(-0.5, (scrollTop - stopTop(0)) / vh));
           heroBgRef.current.style.transform = `translate3d(0, ${heroDelta * -46}px, 0) scale(${1.03 + heroDelta * 0.05})`;
         }
         if (orbitalBgRef.current) {
-          const capOffset = (scrollTop - vh) / vh;
+          const capOffset = Math.min(1.2, Math.max(-1.2, (scrollTop - stopTop(1)) / vh));
           orbitalBgRef.current.style.transform = `translate3d(0, ${capOffset * -36}px, 0) scale(${1.05 + Math.abs(capOffset) * 0.05})`;
         }
         if (ascentBgRef.current) {
-          const benchOffset = (scrollTop - vh * 2) / vh;
+          const benchOffset = Math.min(1.2, Math.max(-1.2, (scrollTop - stopTop(2)) / vh));
           ascentBgRef.current.style.transform = `translate3d(0, ${benchOffset * -42}px, 0) scale(${1.05 + Math.abs(benchOffset) * 0.05})`;
         }
         if (edgeBgRef.current) {
-          const edgeOffset = (scrollTop - vh * 3) / vh;
+          const edgeOffset = Math.min(1.2, Math.max(-1.2, (scrollTop - stopTop(3)) / vh));
           edgeBgRef.current.style.transform = `translate3d(0, ${edgeOffset * -38}px, 0) scale(${1.05 + Math.abs(edgeOffset) * 0.05})`;
         }
         if (earthBgRef.current) {
-          const sigOffset = (scrollTop - vh * 4) / vh;
+          const sigOffset = Math.min(1.2, Math.max(-1.2, (scrollTop - stopTop(4)) / vh));
           earthBgRef.current.style.transform = `translate3d(0, ${sigOffset * -32}px, 0) scale(${1.04 + Math.abs(sigOffset) * 0.04})`;
         }
       }
@@ -482,13 +496,13 @@ export default function HomePage() {
         })}
       </nav>
 
-      {/* Strict 100dvh mandatory snap-scroll viewport root */}
+      {/* Strict 100dvh snap on desktop, adaptive proximity flow on mobile so zero content clips */}
       <div
         ref={scrollRootRef}
-        className="h-[100dvh] w-full snap-y snap-mandatory overflow-x-hidden overflow-y-auto scroll-smooth"
+        className="h-[100dvh] w-full snap-y snap-proximity overflow-x-hidden overflow-y-auto scroll-smooth md:snap-mandatory"
       >
         {/* =====================================================================
-            SECTION 01 — HERO (100dvh, zero clutter, mobile-first 1-tap try)
+            SECTION 01 — HERO (100dvh on desktop, adaptive min-h on mobile)
            ===================================================================== */}
         <section
           id="hero"
@@ -497,7 +511,7 @@ export default function HomePage() {
             chapterStopsRef.current[0] = el;
           }}
           onPointerMove={handleHeroPointerMove}
-          className="relative flex h-[100dvh] w-full snap-start snap-always flex-col overflow-hidden pt-14"
+          className="relative flex min-h-[100dvh] w-full snap-start flex-col overflow-x-clip pt-14 md:h-[100dvh] md:snap-always md:overflow-hidden"
         >
           <div className="pointer-events-none absolute inset-0 overflow-hidden select-none">
             <img
@@ -517,13 +531,13 @@ export default function HomePage() {
             {/* Clean centered/editorial focal stack */}
             <div className="max-w-2xl space-y-5 sm:space-y-7">
               {/* 3-segment source mode switcher + quiet MCP access trigger */}
-              <div className="hero-fade-reveal relative z-30 flex flex-wrap items-center gap-2.5" style={{ animationDelay: "20ms" }}>
+              <div className="hero-fade-reveal relative z-30 flex flex-wrap items-center gap-2 sm:gap-2.5" style={{ animationDelay: "20ms" }}>
                 <div
                   ref={devMenuContainerRef}
-                  className="relative inline-block"
+                  className="relative inline-block max-w-full"
                 >
                 <div
-                  className="inline-flex items-center rounded-[2px] border border-border/90 bg-background/85 p-0.5 backdrop-blur-md"
+                  className="inline-flex max-w-full items-center rounded-[2px] border border-border/90 bg-background/85 p-0.5 backdrop-blur-md"
                   role="tablist"
                   aria-label="Knowledge source type"
                 >
@@ -536,7 +550,7 @@ export default function HomePage() {
                       setDevMenuOpen(false);
                       setError("");
                     }}
-                    className={`inline-flex items-center gap-1.5 rounded-[1px] px-3 py-1.5 font-mono text-[10px] font-medium tracking-[0.16em] uppercase transition-all duration-200 ${
+                    className={`inline-flex items-center gap-1.5 rounded-[1px] px-2.5 py-2 font-mono text-[10px] font-medium tracking-[0.14em] uppercase transition-all duration-200 sm:px-3 sm:py-1.5 sm:tracking-[0.16em] ${
                       heroSegment === "repo"
                         ? "bg-foreground text-background"
                         : "text-muted-foreground hover:text-foreground"
@@ -555,7 +569,7 @@ export default function HomePage() {
                       setDevMenuOpen(false);
                       setError("");
                     }}
-                    className={`inline-flex items-center gap-1.5 rounded-[1px] px-3 py-1.5 font-mono text-[10px] font-medium tracking-[0.16em] uppercase transition-all duration-200 ${
+                    className={`inline-flex items-center gap-1.5 rounded-[1px] px-2.5 py-2 font-mono text-[10px] font-medium tracking-[0.14em] uppercase transition-all duration-200 sm:px-3 sm:py-1.5 sm:tracking-[0.16em] ${
                       heroSegment === "pdf"
                         ? "bg-foreground text-background"
                         : "text-muted-foreground hover:text-foreground"
@@ -580,7 +594,7 @@ export default function HomePage() {
                       }
                       setError("");
                     }}
-                    className={`inline-flex items-center gap-1.5 rounded-[1px] px-3 py-1.5 font-mono text-[10px] font-medium tracking-[0.16em] uppercase transition-all duration-200 ${
+                    className={`inline-flex items-center gap-1.5 rounded-[1px] px-2.5 py-2 font-mono text-[10px] font-medium tracking-[0.14em] uppercase transition-all duration-200 sm:px-3 sm:py-1.5 sm:tracking-[0.16em] ${
                       heroSegment === "devdocs"
                         ? "bg-foreground text-background"
                         : "text-muted-foreground hover:text-foreground"
@@ -673,7 +687,7 @@ export default function HomePage() {
 
               <div className="space-y-3 sm:space-y-4">
                 <h1
-                  className="hero-mask-reveal font-heading text-[2.3rem] leading-[0.98] font-semibold tracking-[0.04em] uppercase sm:text-6xl lg:text-[4.5rem]"
+                  className="hero-mask-reveal font-heading text-[2.1rem] leading-[1.02] font-semibold tracking-[0.04em] uppercase sm:text-6xl sm:leading-[0.98] lg:text-[4.5rem]"
                   style={{ animationDelay: "60ms" }}
                 >
                   Interrogate Any{" "}
@@ -704,6 +718,11 @@ export default function HomePage() {
                         </div>
                         <input
                           ref={inputRef}
+                          type="url"
+                          inputMode="url"
+                          autoCapitalize="none"
+                          autoCorrect="off"
+                          spellCheck={false}
                           value={repoUrl}
                           onChange={(event) => {
                             setRepoUrl(event.target.value);
@@ -714,7 +733,7 @@ export default function HomePage() {
                           }}
                           placeholder="https://github.com/owner/repository"
                           aria-label="GitHub repository URL"
-                          className="h-12 min-w-0 flex-1 bg-transparent px-3 font-mono text-xs tracking-wide text-foreground outline-none placeholder:text-muted-foreground/60 sm:px-4 sm:text-sm"
+                          className="h-12 min-w-0 flex-1 bg-transparent px-3 font-mono text-base tracking-wide text-foreground outline-none placeholder:text-xs placeholder:text-muted-foreground/60 sm:px-4 sm:text-sm sm:placeholder:text-sm"
                         />
                       </div>
                       <Button
@@ -811,14 +830,14 @@ export default function HomePage() {
         />
 
         {/* =====================================================================
-            SECTION 03 — BENCHMARKS (100dvh, bold 2x2 spec grid, zero essay)
+            SECTION 03 — BENCHMARKS (100dvh on desktop, adaptive on mobile)
            ===================================================================== */}
         <section
           id="latency"
           ref={(el) => {
             chapterStopsRef.current[2] = el;
           }}
-          className="relative flex h-[100dvh] w-full snap-start snap-always flex-col overflow-hidden border-t border-border/60 pt-14"
+          className="relative flex min-h-[100dvh] w-full snap-start flex-col overflow-x-clip border-t border-border/60 pt-14 md:h-[100dvh] md:snap-always md:overflow-hidden"
         >
           <div className="pointer-events-none absolute inset-0 overflow-hidden select-none">
             <img
@@ -842,11 +861,11 @@ export default function HomePage() {
             </Reveal>
 
             {/* Spacious 2x2 high-contrast telemetry grid — effortless to scan on mobile & desktop */}
-            <div className="grid grid-cols-2 gap-3 sm:gap-5">
+            <div className="grid grid-cols-1 gap-2.5 min-[380px]:grid-cols-2 sm:gap-5">
               {BENCHMARK_CARDS.map((card, idx) => (
                 <Reveal key={card.code} visible={revealed[2]} delay={70 + idx * 75}>
                   <SpotlightCard className="group flex h-full flex-col justify-between border border-border/80 bg-card/70 p-3.5 sm:p-5">
-                    <div className="flex items-center justify-between gap-2 font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+                    <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 font-mono text-[10px] tracking-[0.12em] text-muted-foreground uppercase sm:tracking-[0.14em]">
                       <span>{card.label}</span>
                       <span className="tabular-telemetry line-through opacity-55">
                         {card.before}
@@ -854,7 +873,7 @@ export default function HomePage() {
                     </div>
 
                     <div className="my-2.5 sm:my-4">
-                      <p className="font-heading text-3xl leading-none font-semibold tracking-[0.02em] text-foreground sm:text-5xl lg:text-[3.25rem]">
+                      <p className="font-heading text-2xl leading-none font-semibold tracking-[0.02em] text-foreground min-[380px]:text-3xl sm:text-5xl lg:text-[3.25rem]">
                         <AnimatedNumber
                           from={card.from}
                           to={card.to}
@@ -863,7 +882,7 @@ export default function HomePage() {
                           reducedMotion={reducedMotion}
                         />
                       </p>
-                      <p className="mt-2 font-mono text-[10px] tracking-[0.1em] text-muted-foreground uppercase sm:text-[11px]">
+                      <p className="mt-2 font-mono text-[10px] tracking-[0.08em] text-muted-foreground uppercase sm:text-[11px] sm:tracking-[0.1em]">
                         {card.note}
                       </p>
                     </div>
@@ -886,7 +905,7 @@ export default function HomePage() {
             <Reveal
               visible={revealed[2]}
               delay={320}
-              className="flex items-center justify-between border-t border-border/70 pt-3 font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase"
+              className="flex flex-wrap items-center justify-between gap-2 border-t border-border/70 pt-3 font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase sm:tracking-[0.16em]"
             >
               <span>4-TIER ROUTING · 5-MODEL FAILOVER</span>
               <button
@@ -902,14 +921,14 @@ export default function HomePage() {
         </section>
 
         {/* =====================================================================
-            SECTION 04 — THE EDGE (100dvh, crisp 4-row hairline spec list)
+            SECTION 04 — THE EDGE (100dvh on desktop, adaptive on mobile)
            ===================================================================== */}
         <section
           id="edge"
           ref={(el) => {
             chapterStopsRef.current[3] = el;
           }}
-          className="relative flex h-[100dvh] w-full snap-start snap-always flex-col overflow-hidden border-t border-border/60 pt-14"
+          className="relative flex min-h-[100dvh] w-full snap-start flex-col overflow-x-clip border-t border-border/60 pt-14 md:h-[100dvh] md:snap-always md:overflow-hidden"
         >
           <div className="pointer-events-none absolute inset-0 overflow-hidden select-none">
             <img
@@ -1005,14 +1024,14 @@ export default function HomePage() {
         </section>
 
         {/* =====================================================================
-            SECTION 05 — CLOSING / SIGNATURE (100dvh)
+            SECTION 05 — CLOSING / SIGNATURE (100dvh on desktop, adaptive on mobile)
            ===================================================================== */}
         <section
           id="signature"
           ref={(el) => {
             chapterStopsRef.current[4] = el;
           }}
-          className="relative flex h-[100dvh] w-full snap-start snap-always flex-col overflow-hidden border-t border-border/60 pt-14"
+          className="relative flex min-h-[100dvh] w-full snap-start flex-col overflow-x-clip border-t border-border/60 pt-14 md:h-[100dvh] md:snap-always md:overflow-hidden"
         >
           <div className="pointer-events-none absolute inset-0 overflow-hidden select-none">
             <img
@@ -1025,7 +1044,7 @@ export default function HomePage() {
             <svg
               aria-hidden="true"
               viewBox="0 0 600 600"
-              className="orbital-spin absolute top-1/2 left-1/2 size-[360px] -translate-x-1/2 -translate-y-1/2 opacity-[0.14] sm:size-[540px]"
+              className="orbital-spin absolute top-1/2 left-1/2 size-[280px] -translate-x-1/2 -translate-y-1/2 opacity-[0.14] sm:size-[540px]"
             >
               <circle
                 cx="300"
@@ -1094,7 +1113,7 @@ export default function HomePage() {
               </Reveal>
             </div>
 
-            <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4 font-mono text-[10px] tracking-[0.16em] text-muted-foreground/75 uppercase">
+            <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4 pb-[env(safe-area-inset-bottom)] font-mono text-[10px] tracking-[0.16em] text-muted-foreground/75 uppercase">
               <span>TRACE // CODEBASE MISSION CONTROL</span>
               <button
                 type="button"

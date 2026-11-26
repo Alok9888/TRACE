@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import { ThemeProvider } from "@/components/providers/theme-provider";
@@ -36,6 +36,16 @@ export const metadata: Metadata = {
   description: "Analyze public GitHub repositories and interrogate codebases with precision RAG telemetry.",
 };
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#000000" },
+    { media: "(prefers-color-scheme: light)", color: "#fafafa" },
+  ],
+};
+
 const backendOrigin = (
   process.env.NEXT_PUBLIC_API_BASE_URL || "https://trace-backend.onrender.com"
 ).replace(/\/$/, "");
@@ -48,14 +58,14 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${barlow.variable} ${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
+      className={`${barlow.variable} ${inter.variable} ${jetbrainsMono.variable} h-full overflow-x-clip antialiased`}
       suppressHydrationWarning
     >
       <head>
         <link rel="preconnect" href={backendOrigin} crossOrigin="anonymous" />
         <link rel="dns-prefetch" href={backendOrigin} />
       </head>
-      <body className="min-h-full flex flex-col bg-background text-foreground selection:bg-foreground selection:text-background">
+      <body className="min-h-full overflow-x-clip flex flex-col bg-background text-foreground selection:bg-foreground selection:text-background">
         <QueryProvider>
           <ThemeProvider
             attribute="class"

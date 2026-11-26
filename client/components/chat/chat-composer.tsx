@@ -42,7 +42,7 @@ export const ChatComposer = memo(function ChatComposer({
   }
 
   return (
-    <div className="shrink-0 border-t border-border bg-background/90 px-3 py-3 backdrop-blur-md sm:px-5 sm:py-4">
+    <div className="shrink-0 border-t border-border bg-background/90 px-3 pt-2.5 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur-md sm:px-5 sm:py-4">
       <div className="mx-auto max-w-3xl space-y-2">
         <div className="flex items-end gap-2 rounded-[2px] border border-input bg-card p-1.5 transition-colors focus-within:border-foreground sm:p-2">
           <Textarea
@@ -50,7 +50,7 @@ export const ChatComposer = memo(function ChatComposer({
             onChange={(e) => setValue(e.target.value)}
             placeholder={placeholder}
             disabled={disabled}
-            className="min-h-11 flex-1 resize-none border-0 bg-transparent px-2.5 py-2 text-sm shadow-none focus-visible:ring-0"
+            className="min-h-11 flex-1 resize-none border-0 bg-transparent px-2.5 py-2 text-base shadow-none focus-visible:ring-0 sm:text-sm"
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -64,7 +64,7 @@ export const ChatComposer = memo(function ChatComposer({
               variant="outline"
               onClick={onStop}
               aria-label="Stop generating"
-              className="h-9 px-3"
+              className="h-10 shrink-0 px-3 sm:h-9"
             >
               <Square className="size-3" />
               Abort
@@ -75,18 +75,18 @@ export const ChatComposer = memo(function ChatComposer({
               disabled={disabled || !value.trim()}
               onClick={() => void submit()}
               aria-label="Send message"
-              className="h-9 px-4"
+              className="h-10 shrink-0 px-3.5 sm:h-9 sm:px-4"
             >
               {disabled ? <Spinner /> : <SendHorizontal className="size-3.5" />}
               Send
             </Button>
           )}
         </div>
-        <div className="flex items-center justify-between px-0.5 font-mono text-[10px] tracking-[0.12em] text-muted-foreground uppercase">
+        <div className="hidden items-center justify-between px-0.5 font-mono text-[10px] tracking-[0.12em] text-muted-foreground uppercase sm:flex">
           <span>
             <Kbd>ENTER</Kbd> TRANSMIT · <Kbd>SHIFT+ENTER</Kbd> NEWLINE
           </span>
-          <span className="hidden sm:inline">GROUNDED RAG // 384-DIM</span>
+          <span>GROUNDED RAG // 384-DIM</span>
         </div>
       </div>
     </div>

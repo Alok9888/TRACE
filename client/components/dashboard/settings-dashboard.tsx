@@ -52,7 +52,7 @@ export function SettingsDashboard() {
   };
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-5 p-5 md:p-6">
+    <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 p-4 sm:gap-5 sm:p-5 md:p-6">
       <Card>
         <CardHeader>
           <CardTitle className="font-heading text-xs font-semibold tracking-[0.18em] uppercase">
@@ -80,7 +80,7 @@ export function SettingsDashboard() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center gap-3 border border-border bg-background/60 px-3.5 py-2.5">
+          <div className="flex flex-col items-stretch gap-3 border border-border bg-background/60 px-3.5 py-2.5 sm:flex-row sm:items-center">
             <div className="flex-1">
               <Label className="font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase">
                 Workspace ID

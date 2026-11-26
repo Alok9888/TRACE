@@ -124,15 +124,15 @@ export const ChatSidebar = memo(function ChatSidebar({
   const showParams = desktopTab === "params";
 
   return (
-    <aside className="sticky top-13 z-10 flex w-full shrink-0 flex-col border-b border-border bg-sidebar md:h-full md:w-72 md:overflow-hidden md:border-r md:border-b-0">
+    <aside className="sticky top-0 z-10 flex w-full shrink-0 flex-col border-b border-border bg-sidebar md:h-full md:w-72 md:overflow-hidden md:border-r md:border-b-0">
       {/* Compact mobile bar (< md) so chat gets the full viewport height */}
-      <div className="flex items-center justify-between gap-2 px-3 py-2 md:hidden">
+      <div className="flex items-center justify-between gap-2 px-3 py-2.5 md:hidden">
         <button
           type="button"
           onClick={() =>
             setMobilePanel((prev) => (prev === "logs" ? null : "logs"))
           }
-          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          className="flex min-h-8 min-w-0 flex-1 items-center gap-2 text-left"
         >
           <IndexStatusBadge status={repo.indexStatus} />
           <span className="truncate font-mono text-[11px] tracking-[0.06em] text-foreground">
@@ -148,7 +148,7 @@ export const ChatSidebar = memo(function ChatSidebar({
 
         <div className="flex shrink-0 items-center gap-1.5">
           <Button
-            size="icon-xs"
+            size="icon-sm"
             variant={mobilePanel === "params" ? "default" : "outline"}
             onClick={() =>
               setMobilePanel((prev) => (prev === "params" ? null : "params"))
@@ -156,13 +156,13 @@ export const ChatSidebar = memo(function ChatSidebar({
             aria-label="Configure LLM and retrieval parameters"
             className="relative"
           >
-            <SlidersHorizontal className="size-3" />
+            <SlidersHorizontal className="size-3.5" />
             {isCustomized && mobilePanel !== "params" && (
               <span className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-foreground" />
             )}
           </Button>
           <Button
-            size="xs"
+            size="sm"
             disabled={!ready || createSession.isPending}
             onClick={() =>
               createSession.mutate("New chat", {
@@ -173,18 +173,18 @@ export const ChatSidebar = memo(function ChatSidebar({
               })
             }
           >
-            <Plus className="size-3" />
+            <Plus className="size-3.5" />
             New
           </Button>
           {!uploaded && (
             <Button
-              size="icon-xs"
+              size="icon-sm"
               variant="outline"
               disabled={reindex.isPending || repo.indexStatus === "INDEXING"}
               onClick={() => reindex.mutate(repo.id)}
               aria-label="Re-index source"
             >
-              <RotateCcw className="size-3" />
+              <RotateCcw className="size-3.5" />
             </Button>
           )}
         </div>
@@ -353,7 +353,7 @@ export const ChatSidebar = memo(function ChatSidebar({
       {/* LLM & Retrieval Parameters panel (desktop Params tab OR mobile params drawer) */}
       <ScrollArea
         className={cn(
-          "min-h-0 max-h-[60svh] overflow-hidden border-t border-border/60 md:max-h-none md:flex-1 md:border-t-0",
+          "min-h-0 max-h-[55dvh] overflow-hidden border-t border-border/60 md:max-h-none md:flex-1 md:border-t-0",
           mobilePanel === "params" ? "block" : "hidden",
           showParams ? "md:block" : "md:hidden"
         )}
@@ -447,7 +447,7 @@ export const ChatSidebar = memo(function ChatSidebar({
               value={config.systemPrompt}
               onChange={(e) => updateField("systemPrompt", e.target.value)}
               placeholder="e.g. Explain like senior engineer"
-              className="w-full resize-y rounded-[2px] border border-input bg-background/80 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-foreground outline-none transition-colors placeholder:text-muted-foreground/55 focus:border-foreground"
+              className="w-full resize-y rounded-[2px] border border-input bg-background/80 px-2.5 py-2 font-mono text-base leading-relaxed text-foreground outline-none transition-colors placeholder:text-xs placeholder:text-muted-foreground/55 focus:border-foreground sm:text-[11px] sm:placeholder:text-[11px]"
             />
           </div>
 

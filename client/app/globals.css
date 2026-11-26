@@ -130,6 +130,8 @@
     font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, sans-serif;
     background-color: var(--background);
     color: var(--foreground);
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
   }
   body {
     @apply bg-background text-foreground;
@@ -246,6 +248,20 @@
 .range-telemetry:hover::-moz-range-thumb,
 .range-telemetry:focus-visible::-moz-range-thumb {
   transform: scale(1.2);
+}
+@media (pointer: coarse) {
+  .range-telemetry {
+    height: 28px;
+  }
+  .range-telemetry::-webkit-slider-thumb {
+    width: 16px;
+    height: 16px;
+    margin-top: -7px;
+  }
+  .range-telemetry::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+  }
 }
 
 /* Restrained scroll-triggered reveals for landing viewports */

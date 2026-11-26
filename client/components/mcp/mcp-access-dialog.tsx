@@ -37,7 +37,7 @@ export function McpAccessDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="rounded-[2px] border-border bg-card sm:max-w-lg">
+      <DialogContent className="max-h-[90dvh] w-[calc(100vw-1.5rem)] overflow-y-auto rounded-[2px] border-border bg-card p-4 sm:max-w-lg sm:p-6">
         {open ? (
           <McpAccessDialogBody onClose={() => onOpenChange(false)} />
         ) : null}
@@ -202,7 +202,7 @@ function McpAccessDialogBody({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 border border-foreground/40 bg-background px-3 py-2">
+              <div className="flex flex-col items-stretch gap-2 border border-foreground/40 bg-background px-3 py-2 sm:flex-row sm:items-center">
                 <code className="min-w-0 flex-1 break-all font-mono text-xs text-foreground select-all">
                   {oneTimePlaintextKey}
                 </code>
@@ -210,7 +210,7 @@ function McpAccessDialogBody({ onClose }: { onClose: () => void }) {
                   type="button"
                   onClick={() => void handleCopy(oneTimePlaintextKey, "key")}
                   aria-label="Copy generated MCP API key"
-                  className="inline-flex shrink-0 items-center gap-1 rounded-[2px] border border-foreground bg-foreground px-2.5 py-1 font-mono text-[10px] font-medium tracking-[0.1em] text-background uppercase transition-opacity hover:opacity-90"
+                  className="inline-flex shrink-0 items-center justify-center gap-1 rounded-[2px] border border-foreground bg-foreground px-2.5 py-1.5 font-mono text-[10px] font-medium tracking-[0.1em] text-background uppercase transition-opacity hover:opacity-90 sm:py-1"
                 >
                   {copiedField === "key" ? (
                     <>

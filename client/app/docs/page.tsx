@@ -224,10 +224,10 @@ export default function DocsPage() {
             </span>
           </div>
 
-          <div className="flex items-center gap-3 sm:gap-4">
+          <div className="flex items-center gap-2.5 sm:gap-4">
             <Link
               href="/"
-              className="inline-flex items-center gap-1.5 font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase transition-colors hover:text-foreground"
+              className="hidden items-center gap-1.5 font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase transition-colors hover:text-foreground sm:inline-flex"
             >
               <ArrowLeft className="size-3" />
               <span>Home</span>
@@ -247,7 +247,7 @@ export default function DocsPage() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-4xl space-y-12 px-4 py-10 sm:px-6 sm:py-14">
+      <main className="mx-auto w-full max-w-4xl space-y-10 px-4 py-8 sm:space-y-12 sm:px-6 sm:py-14">
         {/* Title & Overview */}
         <section className="space-y-4 border-b border-border pb-8">
           <p className="font-mono text-[10px] tracking-[0.22em] text-muted-foreground uppercase">
@@ -265,14 +265,14 @@ export default function DocsPage() {
               <KeyRound className="size-3.5" />
               Generate Workspace API Key
             </Button>
-            <div className="flex items-center gap-2 border border-border bg-card/70 px-3 py-1.5 font-mono text-xs">
-              <span className="text-muted-foreground">ENDPOINT</span>
-              <code className="text-foreground">{endpoint}</code>
+            <div className="flex w-full min-w-0 items-center gap-2 border border-border bg-card/70 px-3 py-1.5 font-mono text-xs sm:w-auto">
+              <span className="shrink-0 text-muted-foreground">ENDPOINT</span>
+              <code className="min-w-0 flex-1 truncate text-foreground">{endpoint}</code>
               <button
                 type="button"
                 onClick={() => void copyText(endpoint, "endpoint")}
                 aria-label="Copy endpoint URL"
-                className="text-muted-foreground transition-colors hover:text-foreground"
+                className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
               >
                 {copiedId === "endpoint" ? (
                   <Check className="size-3.5 text-foreground" />
