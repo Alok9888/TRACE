@@ -1,0 +1,26 @@
+# Version control & CI
+.git
+.gitignore
+.github
+
+# Secrets & local environment files
+.env
+.env.*
+!.env.example
+
+# Local binaries & build artifacts
+server
+trace-server
+*.exe
+*.out
+*.test
+coverage.*
+tmp/
+
+# IDE & OS metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.log

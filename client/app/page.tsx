@@ -93,13 +93,13 @@ const BENCHMARK_CARDS = [
   },
   {
     code: "04",
-    label: "JVM Heap",
-    before: "512 MB",
-    from: 512,
-    to: 160,
+    label: "Runtime Memory",
+    before: "280 MB",
+    from: 280,
+    to: 25,
     suffix: " MB",
-    note: "60 fps streamed UI",
-    barPct: "32%",
+    note: "Go binary · 60 fps SSE",
+    barPct: "9%",
   },
 ] as const;
 
@@ -107,7 +107,7 @@ const EDGE_ROWS = [
   {
     num: "01",
     title: "Zero Auth",
-    summary: "Paste any public repo or drop a PDF. Instant access.",
+    summary: "Paste any public repo or drop a PDF, notebook, config, or EPUB.",
     tag: "MULTI-SOURCE",
   },
   {
@@ -120,7 +120,7 @@ const EDGE_ROWS = [
   {
     num: "03",
     title: "Exact Citations",
-    summary: "Every answer links directly to file lines or PDF pages.",
+    summary: "Every answer links directly to file lines, pages, cells, chapters, or blocks.",
     tag: "VERIFIABLE",
   },
   {
@@ -517,7 +517,7 @@ export default function HomePage() {
             {/* Clean centered/editorial focal stack */}
             <div className="max-w-2xl space-y-5 sm:space-y-7">
               {/* 3-segment source mode switcher + quiet MCP access trigger */}
-              <div className="hero-mask-reveal relative z-20 flex flex-wrap items-center gap-2.5" style={{ animationDelay: "20ms" }}>
+              <div className="hero-fade-reveal relative z-30 flex flex-wrap items-center gap-2.5" style={{ animationDelay: "20ms" }}>
                 <div
                   ref={devMenuContainerRef}
                   className="relative inline-block"
@@ -572,8 +572,12 @@ export default function HomePage() {
                     aria-haspopup="menu"
                     aria-expanded={devMenuOpen}
                     onClick={() => {
-                      setHeroSegment("devdocs");
-                      setDevMenuOpen((open) => !open);
+                      if (heroSegment !== "devdocs") {
+                        setHeroSegment("devdocs");
+                        setDevMenuOpen(true);
+                      } else {
+                        setDevMenuOpen((open) => !open);
+                      }
                       setError("");
                     }}
                     className={`inline-flex items-center gap-1.5 rounded-[1px] px-3 py-1.5 font-mono text-[10px] font-medium tracking-[0.16em] uppercase transition-all duration-200 ${
@@ -598,7 +602,7 @@ export default function HomePage() {
                   <div
                     role="menu"
                     aria-label="Developer document formats"
-                    className="absolute top-full left-0 z-30 mt-1.5 w-[min(22rem,calc(100vw-2rem))] rounded-[2px] border border-border bg-card/95 p-1 shadow-xl backdrop-blur-md"
+                    className="absolute top-full left-0 z-50 mt-1.5 w-[min(22rem,calc(100vw-2rem))] rounded-[2px] border border-border bg-card/98 p-1 shadow-2xl backdrop-blur-md"
                   >
                     {DEV_DOCS_OPTIONS.map((option, idx) => {
                       const isSelected = heroSegment === "devdocs" && devSubFormat === option.id;

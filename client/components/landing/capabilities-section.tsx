@@ -28,8 +28,8 @@ const CAPABILITY_CARDS = [
     icon: Cpu,
     title: "Lightweight & Fast",
     summary:
-      "Java 21 virtual threads inside a 160 MB JVM heap, 64-chunk batched Cloudflare embeddings, single-vector CTE SQL, and 60 fps streamed SSE.",
-    meta: "-Xmx160m · DIRECT CTE SQL",
+      "Compiled Go binary running bounded goroutine pools in ~25 MB RAM, 64-chunk batched Cloudflare embeddings, direct CTE PgVector SQL, and 60 fps streamed SSE.",
+    meta: "GO · ~25 MB RSS · DIRECT CTE SQL",
   },
   {
     code: "04",

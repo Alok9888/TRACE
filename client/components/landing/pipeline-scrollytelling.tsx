@@ -28,16 +28,16 @@ export const PIPELINE_BEATS = [
 ] as const;
 
 const INGEST_FILES = [
-  { path: "ChatStreamHandler.java", tag: "STREAM", dim: false },
-  { path: "CodeContextRetriever.java", tag: "STREAM", dim: false },
-  { path: "EmbeddingConfig.java", tag: "SHA SKIP", dim: true },
+  { path: "internal/ai/stream.go", tag: "STREAM", dim: false },
+  { path: "internal/store/vector_store.go", tag: "STREAM", dim: false },
+  { path: "internal/embedding/cloudflare.go", tag: "SHA SKIP", dim: true },
   { path: "package-lock.json", tag: "SKIP", dim: true },
 ] as const;
 
 const VECTOR_MATCHES = [
-  { file: "ChatStreamHandler.java:318", score: "0.92", width: "92%" },
-  { file: "CodeContextRetriever.java:139", score: "0.87", width: "87%" },
-  { file: "EmbeddingConfig.java:56", score: "0.81", width: "81%" },
+  { file: "internal/ai/stream.go:286", score: "0.92", width: "92%" },
+  { file: "internal/store/vector_store.go:108", score: "0.87", width: "87%" },
+  { file: "internal/embedding/cloudflare.go:132", score: "0.81", width: "81%" },
 ] as const;
 
 function PipelineTelemetryVisual({ activeBeat }: { activeBeat: number }) {
@@ -186,7 +186,7 @@ function PipelineTelemetryVisual({ activeBeat }: { activeBeat: number }) {
       </div>
 
       <div className="flex items-center justify-between border-t border-border/70 pt-2.5 font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
-        <span>160 MB JVM HEAP</span>
+        <span>~25 MB GO RSS</span>
         <div className="flex items-center gap-1.5">
           {PIPELINE_BEATS.map((b, i) => (
             <span
@@ -339,7 +339,7 @@ export function PipelineScrollytelling({
 
           {/* Minimal footer bar */}
           <div className="flex items-center justify-between border-t border-border/70 pt-3 font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase">
-            <span>JAVA 21 · PGVECTOR · CLOUDFLARE AI</span>
+            <span>GO · PGVECTOR · CLOUDFLARE AI</span>
             <button
               type="button"
               onClick={onNextSection}

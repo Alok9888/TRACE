@@ -1,0 +1,45 @@
+name: Go Backend CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    name: Vet, Test (Race), and Docker Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend-go
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend-go/go.mod
+          cache: true
+          cache-dependency-path: backend-go/go.sum
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run unit tests with race detector
+        run: go test -v -race ./...
+
+      - name: Verify production Docker build
+        run: docker build -t trace-backend:ci .

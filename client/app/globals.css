@@ -262,7 +262,7 @@
   transform: translate3d(0, 0, 0);
 }
 
-/* Editorial clip-mask headline entrance */
+/* Editorial clip-mask headline entrance (backwards releases clip-path after entrance so dropdowns are never clipped) */
 @keyframes hero-mask-in {
   from {
     opacity: 0;
@@ -276,7 +276,22 @@
   }
 }
 .hero-mask-reveal {
-  animation: hero-mask-in 820ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: hero-mask-in 820ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+/* Clip-free fade entrance for interactive control bars containing popovers/dropdowns */
+@keyframes hero-fade-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+.hero-fade-reveal {
+  animation: hero-fade-in 680ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
 }
 
 /* Cursor-tracking monochrome specular spotlight card */
@@ -442,7 +457,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .reveal-item,
-  .hero-mask-reveal {
+  .hero-mask-reveal,
+  .hero-fade-reveal {
     opacity: 1 !important;
     transform: none !important;
     clip-path: none !important;
