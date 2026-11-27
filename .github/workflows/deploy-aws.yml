@@ -1,0 +1,122 @@
+name: Deploy Go Backend to AWS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend-go/**"
+      - "infra/aws/deploy-trace.sh"
+      - ".github/workflows/deploy-aws.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-aws-prod
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-southeast-2
+  ECR_REPOSITORY: trace-backend
+
+jobs:
+  test-build-deploy:
+    name: Test, Push to ECR, and Blue/Green Deploy via SSM
+    if: ${{ vars.AWS_DEPLOY_ROLE_ARN != '' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend-go/go.mod
+          cache: true
+          cache-dependency-path: backend-go/go.sum
+
+      - name: Run go vet and unit tests
+        working-directory: backend-go
+        run: |
+          go vet ./...
+          go test -race ./...
+
+      - name: Configure AWS credentials via GitHub OIDC (keyless)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push immutable Docker image to ECR
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend-go
+          file: ./backend-go/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trigger zero-SSH blue/green deploy via AWS SSM Run Command
+        env:
+          IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+        run: |
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --region "$AWS_REGION" \
+            --filters "Name=tag:Name,Values=trace-backend" "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].InstanceId" \
+            --output text)
+
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+            echo "ERROR: No running EC2 instance tagged Name=trace-backend found in $AWS_REGION"
+            exit 1
+          fi
+
+          echo "Deploying $IMAGE_URI to instance $INSTANCE_ID..."
+          CMD_ID=$(aws ssm send-command \
+            --region "$AWS_REGION" \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy trace-backend ${GITHUB_SHA::8}" \
+            --parameters "commands=[\"/usr/local/bin/deploy-trace.sh ${IMAGE_URI}\"]" \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "SSM Command ID: $CMD_ID"
+          for i in $(seq 1 60); do
+            STATUS=$(aws ssm get-command-invocation \
+              --region "$AWS_REGION" \
+              --command-id "$CMD_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --query "Status" \
+              --output text 2>/dev/null || echo "Pending")
+            echo "[$i] Status: $STATUS"
+            case "$STATUS" in
+              Success)
+                aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --query "StandardOutputContent" --output text
+                exit 0
+                ;;
+              Failed|Cancelled|TimedOut|Undeliverable|Terminated)
+                aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --query "StandardOutputContent" --output text
+                aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --query "StandardErrorContent" --output text >&2
+                exit 1
+                ;;
+            esac
+            sleep 5
+          done
+
+          echo "ERROR: Timed out waiting for SSM deployment command $CMD_ID" >&2
+          exit 1
